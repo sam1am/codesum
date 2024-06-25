@@ -75,6 +75,7 @@ When run, the script produces the following:
 1. **Local Code Summary**: 
    - File: `.summary_files/code_summary.md`
    - Contents: A comprehensive summary of all selected files, including their full content and a tree structure of the project.
+   - The contents of this file will automatically be sent to the system clipboard.
 
 2. **Compressed Code Summary** (optional):
    - File: `.summary_files/compressed_code_summary.md`
