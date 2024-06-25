@@ -110,4 +110,4 @@ Thanks to all contributors and library creators.
 
 ## License 📜
 
-[MIT License](LICENSE)
+[Apache 2.0](LICENSE)
