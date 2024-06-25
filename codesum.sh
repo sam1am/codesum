@@ -55,7 +55,7 @@ else
     exit 1
 fi
 
-ALIAS_NAME="code_summarize"
+ALIAS_NAME="codesum"
 ALIAS_EXISTS=$(grep -Fq "alias $ALIAS_NAME=" "$PROFILE_PATH" && echo 'yes' || echo 'no')
 
 # Check if the alias doesn't exist and the user hasn't previously declined
