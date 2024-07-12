@@ -15,7 +15,7 @@ load_dotenv()
 
 IGNORE_LIST = [".git", "venv", ".summary_files"]
 
-LLM_MODEL=os.getenv("LLM_MODEL")
+LLM_MODEL=os.getenv("LLM_MODEL", "gpt-4o")
 print(f"Using model: {LLM_MODEL}")
 
 def build_tree(directory, gitignore_specs, ignore_list):
@@ -348,14 +348,14 @@ def main():
     print("Code summary has been copied to clipboard.")
 
     # Ask user if they want to generate a compressed summary
-    generate_compressed = input("\nDo you want to generate a compressed summary of the selected files? (y/n): ").lower() == 'y'
+    generate_compressed = input("\nDo you want to generate a compressed summary of the selected files? (y/N): ").lower() == 'y'
 
     if generate_compressed:
         create_compressed_summary(selected_files)
         print("\nCompressed code summary successfully created in '.summary_files/compressed_code_summary.md'.")
         
         # Ask user if they want to generate an updated README
-    generate_readme_file = input("\nDo you want to generate an updated README.md file? (y/n): ").lower() == 'y'
+    generate_readme_file = input("\nDo you want to generate an updated README.md file? (y/N): ").lower() == 'y'
 
     if generate_readme_file:
         # Load compressed code summary

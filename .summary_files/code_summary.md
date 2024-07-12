@@ -12,22 +12,6 @@ Output of tree command:
 
 ---
 
-./requirements.txt
-```
-openai
-itsprompt
-pathspec
-python-dotenv
-keyboard
-pyperclip```
----
-
-./env_example
-```
-OPENAI_API_KEY=sk-XXXXXX
-LLM_MODEL=gpt-4o```
----
-
 ./codesum.sh
 ```
 #!/bin/bash
@@ -87,7 +71,7 @@ else
     exit 1
 fi
 
-ALIAS_NAME="code_summarize"
+ALIAS_NAME="codesum"
 ALIAS_EXISTS=$(grep -Fq "alias $ALIAS_NAME=" "$PROFILE_PATH" && echo 'yes' || echo 'no')
 
 # Check if the alias doesn't exist and the user hasn't previously declined
@@ -115,233 +99,6 @@ python "$SCRIPTPATH/app.py" $@
 # Deactivate the virtual environment
 deactivate
 ```
----
-
-./setup.py
-```
-#!/usr/bin/env python3
-
-import os
-import subprocess
-import sys
-import platform
-from pathlib import Path
-import shutil
-
-def is_windows():
-    return platform.system().lower() == "windows"
-
-def get_script_dir():
-    return Path(__file__).parent.absolute()
-
-def setup_virtualenv_and_run_script(script_dir):
-    venv_activate = script_dir / 'venv' / 'bin' / 'activate'
-    run_command = f'source {venv_activate} && python {script_dir / "app.py"}'
-    return run_command
-
-def get_shell_configuration_path():
-    if is_windows():
-        return Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
-    elif platform.system().lower() == "darwin":
-        return Path.home() / ".zshrc"
-    else:
-        return Path.home() / ".bashrc"
-
-def create_virtual_environment(script_dir):
-    venv_path = script_dir / "venv"
-    if not venv_path.is_dir():
-        subprocess.run([sys.executable, "-m", "venv", str(venv_path)])
-    return venv_path
-
-def activate_virtual_environment(venv_path):
-    if is_windows():
-        activate_script = venv_path / "Scripts" / "activate.bat"
-        os.system(f'cmd /k "{activate_script}"')
-    else:
-        activate_script = venv_path / "bin" / "activate"
-        os.environ["VIRTUAL_ENV"] = str(venv_path)
-        old_path = os.environ["PATH"]
-        os.environ["PATH"] = f"{str(venv_path / 'bin')}{os.pathsep}{old_path}"
-        subprocess.run(["source", str(activate_script)], shell=True)
-
-def install_dependencies(script_dir, venv_path):
-    requirements_path = script_dir / "requirements.txt"
-    if requirements_path.is_file():
-        subprocess.run(["pip", "install", "-r", str(requirements_path)])
-    else:
-        print("No requirements.txt found.")
-
-def set_alias(run_command):
-    shell_config_path = get_shell_configuration_path()
-    alias_name = "codesum"
-    alias_command = f'alias {alias_name}="{run_command}"'
-    
-    if shell_config_path.is_file():
-        with open(shell_config_path, "r+") as file:
-            content = file.read()
-            if alias_command not in content:
-                file.write(f"\n# Alias for code_summarize script\n{alias_command}\n")
-                print(f"Alias added to {shell_config_path}. Please restart your shell or run 'source {shell_config_path}' to use it.")
-            else:
-                print("Alias already exists in your shell profile.")
-
-def check_and_create_env_file(script_dir):
-    env_file = script_dir / ".env"
-    env_example = script_dir / "env_example"
-
-    if not env_file.exists():
-        print("No .env file found. Creating one...")
-        if env_example.exists():
-            shutil.copy(env_example, env_file)
-            print("Created .env file from env_example.")
-        else:
-            print("env_example not found. Creating a new .env file.")
-            env_file.touch()
-
-        openai_api_key = input("Please enter your OpenAI API key: ")
-        llm_model = input("Enter the LLM model to use (default is gpt-4): ") or "gpt-4"
-
-        with open(env_file, "w") as f:
-            f.write(f"OPENAI_API_KEY={openai_api_key}\n")
-            f.write(f"LLM_MODEL={llm_model}\n")
-
-        print(".env file created successfully.")
-    else:
-        print(".env file already exists.")
-
-def main():
-    script_dir = get_script_dir()
-    
-    venv_path = create_virtual_environment(script_dir)
-    activate_virtual_environment(venv_path)
-    
-    install_dependencies(script_dir, venv_path)
-    
-    check_and_create_env_file(script_dir)
-    
-    run_command = setup_virtualenv_and_run_script(script_dir)
-    set_alias(run_command)
-
-if __name__ == "__main__":
-    main()
-```
----
-
-./README.md
-```
-# Code Summarizer for LLM Interaction
-
-## Project Description 📝
-
-This tool generates concise code summaries optimized for Large Language Models (LLMs). It uses OpenAI's GPT-4 to create project overviews, making it easier for LLMs to understand and work with your codebase. Features include interactive file selection, summary caching, and automatic README generation.
-
-## Key Features 🔑
-
-- Curses-based interactive file selection
-- Intelligent summary caching
-- Respects `.gitignore` rules
-- Generates detailed and compressed summaries
-- Creates AI-generated README.md
-- Command-line argument support
-
-## Installation 🛠️
-
-You can set up this project using either the automated setup script or manual installation.
-
-### Option 1: Automated Setup (Recommended)
-
-1. Clone the repository
-2. Navigate to the project directory
-3. Run the setup script:
-   ```sh
-   python setup.py
-   ```
-   This script will:
-   - Create a virtual environment
-   - Install dependencies
-   - Set up the .env file
-   - Create an alias for easy usage
-
-### Option 2: Manual Setup
-
-1. Clone the repository
-2. Navigate to the project directory
-3. Set up the Python environment:
-   ```sh
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file with your OpenAI API key:
-   ```
-   OPENAI_API_KEY='your-api-key-here'
-   LLM_MODEL='gpt-4'
-   ```
-5. Optionally, run `codesum.sh` for automated setup
-
-## Usage 🚀
-
-### Python script:
-```sh
-python app.py [--infer]
-```
-
-### Bash script:
-```sh
-chmod +x codesum.sh
-./codesum.sh [arguments]
-```
-
-### Using the alias (if set up):
-```sh
-codesum [arguments]
-```
-
-The `--infer` flag enables OpenAI API calls for summaries and README generation.
-
-## Output 📂
-
-When run, the script produces the following:
-
-1. **Local Code Summary**: 
-   - File: `.summary_files/code_summary.md`
-   - Contents: A comprehensive summary of all selected files, including their full content and a tree structure of the project.
-
-2. **Compressed Code Summary** (optional):
-   - File: `.summary_files/compressed_code_summary.md`
-   - Contents: A condensed version of the code summary, including AI-generated summaries for each file and the project structure.
-
-3. **Updated README.md** (optional):
-   - File: `README.md` in the project root
-   - Contents: An AI-generated README file based on the compressed code summary, including sections like Project Description, Installation, Usage, and more.
-
-4. **Metadata Files**:
-   - Location: `.summary_files/[file_path]_metadata.json` for each summarized file
-   - Contents: JSON files containing the hash of the original file and its generated summary, used for caching purposes.
-
-5. **Previous Selection File**:
-   - File: `.summary_files/previous_selection.json`
-   - Contents: A JSON file storing the list of previously selected files for future reference.
-
-These outputs provide a comprehensive overview of your project, facilitate efficient interaction with LLMs, and streamline future summarization processes.
-
-
-## Dependencies 📚
-
-- openai
-- itsprompt
-- pathspec
-- python-dotenv
-- keyboard
-- curses (built-in)
-
-## Acknowledgements 🙌
-
-Thanks to all contributors and library creators.
-
-## License 📜
-
-[Apache 2.0](LICENSE)```
 ---
 
 ./app.py
@@ -727,5 +484,125 @@ if __name__ == "__main__":
 
 
 
+```
+---
+
+./requirements.txt
+```
+openai
+itsprompt
+pathspec
+python-dotenv
+keyboard
+pyperclip```
+---
+
+./setup.py
+```
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import sys
+import platform
+from pathlib import Path
+import shutil
+
+def is_windows():
+    return platform.system().lower() == "windows"
+
+def get_script_dir():
+    return Path(__file__).parent.absolute()
+
+def setup_virtualenv_and_run_script(script_dir):
+    venv_activate = script_dir / 'venv' / 'bin' / 'activate'
+    run_command = f'source {venv_activate} && python {script_dir / "app.py"}'
+    return run_command
+
+def get_shell_configuration_path():
+    if is_windows():
+        return Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    elif platform.system().lower() == "darwin":
+        return Path.home() / ".zshrc"
+    else:
+        return Path.home() / ".bashrc"
+
+def create_virtual_environment(script_dir):
+    venv_path = script_dir / "venv"
+    if not venv_path.is_dir():
+        subprocess.run([sys.executable, "-m", "venv", str(venv_path)])
+    return venv_path
+
+def activate_virtual_environment(venv_path):
+    if is_windows():
+        activate_script = venv_path / "Scripts" / "activate.bat"
+        os.system(f'cmd /k "{activate_script}"')
+    else:
+        activate_script = venv_path / "bin" / "activate"
+        os.environ["VIRTUAL_ENV"] = str(venv_path)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = f"{str(venv_path / 'bin')}{os.pathsep}{old_path}"
+        subprocess.run(["source", str(activate_script)], shell=True)
+
+def install_dependencies(script_dir, venv_path):
+    requirements_path = script_dir / "requirements.txt"
+    if requirements_path.is_file():
+        subprocess.run(["pip", "install", "-r", str(requirements_path)])
+    else:
+        print("No requirements.txt found.")
+
+def set_alias(run_command):
+    shell_config_path = get_shell_configuration_path()
+    alias_name = "codesum"
+    alias_command = f'alias {alias_name}="{run_command}"'
+    
+    if shell_config_path.is_file():
+        with open(shell_config_path, "r+") as file:
+            content = file.read()
+            if alias_command not in content:
+                file.write(f"\n# Alias for code_summarize script\n{alias_command}\n")
+                print(f"Alias added to {shell_config_path}. Please restart your shell or run 'source {shell_config_path}' to use it.")
+            else:
+                print("Alias already exists in your shell profile.")
+
+def check_and_create_env_file(script_dir):
+    env_file = script_dir / ".env"
+    env_example = script_dir / "env_example"
+
+    if not env_file.exists():
+        print("No .env file found. Creating one...")
+        if env_example.exists():
+            shutil.copy(env_example, env_file)
+            print("Created .env file from env_example.")
+        else:
+            print("env_example not found. Creating a new .env file.")
+            env_file.touch()
+
+        openai_api_key = input("Please enter your OpenAI API key: ")
+        llm_model = input("Enter the LLM model to use (default is gpt-4): ") or "gpt-4"
+
+        with open(env_file, "w") as f:
+            f.write(f"OPENAI_API_KEY={openai_api_key}\n")
+            f.write(f"LLM_MODEL={llm_model}\n")
+
+        print(".env file created successfully.")
+    else:
+        print(".env file already exists.")
+
+def main():
+    script_dir = get_script_dir()
+    
+    venv_path = create_virtual_environment(script_dir)
+    activate_virtual_environment(venv_path)
+    
+    install_dependencies(script_dir, venv_path)
+    
+    check_and_create_env_file(script_dir)
+    
+    run_command = setup_virtualenv_and_run_script(script_dir)
+    set_alias(run_command)
+
+if __name__ == "__main__":
+    main()
 ```
 ---

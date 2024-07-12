@@ -4,6 +4,10 @@
 
 This tool generates concise code summaries optimized for Large Language Models (LLMs). It uses OpenAI's GPT-4 to create project overviews, making it easier for LLMs to understand and work with your codebase. Features include interactive file selection, summary caching, and automatic README generation.
 
+## Video Tutorial
+
+[![codesum youtube video](https://img.youtube.com/vi/IY-KIMyUaB8/0.jpg)](https://www.youtube.com/watch?v=IY-KIMyUaB8)
+
 ## Key Features 🔑
 
 - Curses-based interactive file selection
