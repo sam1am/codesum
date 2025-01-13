@@ -21,16 +21,23 @@ print(f"Using model: {LLM_MODEL}")
 def build_tree(directory, gitignore_specs, ignore_list):
     tree = {}
     for root, dirs, files in os.walk(directory):
-        # Skip ignored directories
-        dirs[:] = [d for d in dirs if d not in ignore_list and (gitignore_specs is None or not gitignore_specs.match_file(d))]
+        # Convert paths to relative paths for gitignore matching
+        rel_root = os.path.relpath(root, directory)
+        
+        # Filter directories
+        dirs[:] = [d for d in dirs 
+                  if d not in ignore_list and 
+                  not (gitignore_specs and gitignore_specs.match_file(os.path.join(rel_root, d) + '/'))]
         
         current = tree
         path = root.split(os.sep)[1:]  # Skip the '.' at the beginning
         for part in path:
             current = current.setdefault(part, {})
         
+        # Filter files
         for file in files:
-            if gitignore_specs is None or not gitignore_specs.match_file(os.path.join(root, file)):
+            rel_path = os.path.join(rel_root, file)
+            if not (gitignore_specs and gitignore_specs.match_file(rel_path)):
                 current[file] = os.path.join(root, file)
     
     return tree
@@ -62,13 +69,18 @@ def create_hidden_directory():
 def get_tree_output():
     def walk_directory_tree(directory, level, gitignore_specs):
         output = ""
-        for entry in sorted(os.listdir(directory)):
+        entries = os.listdir(directory)
+        for entry in sorted(entries):
             entry_path = os.path.join(directory, entry)
+            # Convert to relative path for gitignore matching
             relative_entry_path = os.path.relpath(entry_path, ".")
-
-            # Check if the entry is not in the IGNORE_LIST
-            if not any(ignore_item in entry_path for ignore_item in IGNORE_LIST):
-                if gitignore_specs is None or not gitignore_specs.match_file(relative_entry_path):
+            
+            # Add trailing slash for directories when checking gitignore
+            check_path = relative_entry_path + '/' if os.path.isdir(entry_path) else relative_entry_path
+            
+            # Check if the entry should be ignored
+            if not any(ignore_item in relative_entry_path for ignore_item in IGNORE_LIST):
+                if not (gitignore_specs and gitignore_specs.match_file(check_path)):
                     if os.path.isfile(entry_path):
                         output += f"{' ' * (4 * level)}|-- {entry}\n"
                     elif os.path.isdir(entry_path):
@@ -201,13 +213,15 @@ def display_files():
     files = []
     gitignore_specs = parse_gitignore()
     for root, _, filenames in os.walk("."):
-
+        # Convert to relative path for gitignore matching
+        rel_root = os.path.relpath(root, ".")
+        
         # Check if the root directory is in the IGNORE_LIST
-        if not any(ignore_item in root for ignore_item in IGNORE_LIST):
+        if not any(ignore_item in rel_root for ignore_item in IGNORE_LIST):
             for filename in filenames:
-                file_path = os.path.join(root, filename)
-                if gitignore_specs is None or not gitignore_specs.match_file(file_path):
-                    files.append(file_path)
+                rel_path = os.path.join(rel_root, filename)
+                if not (gitignore_specs and gitignore_specs.match_file(rel_path)):
+                    files.append(os.path.join(root, filename))
     return files
 
 
