@@ -315,13 +315,10 @@ def create_code_summary(selected_files):
         summary.write(f"Output of tree command:\n```\n{tree_output}\n```\n\n---\n")
 
         for file_path in selected_files:
-            summary.write(f"\n{file_path}\n```\n")
+            summary.write(f"```{file_path}\n")  # Put filepath on same line as opening ```
             with open(file_path, "r") as f:
                 summary.write(f.read())
-            summary.write("```\n---\n")
-
-
-
+            summary.write("\n```\n---\n")  # Add newline before closing ```
 
 def read_previous_selection():
     hidden_directory = Path(".summary_files") 
