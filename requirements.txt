@@ -1,6 +1,0 @@
-openai
-itsprompt
-pathspec
-python-dotenv
-keyboard
-pyperclip

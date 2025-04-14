@@ -1,556 +1,897 @@
+Project Root: /Users/johngarfield/Documents/GitHub/codesum
 Project Structure:
 ```
 .
-|-- .DS_Store
+|-- .gitignore
 |-- LICENSE
 |-- README.md
-|-- app.py
-|-- codesum.sh
-|-- env_example
-|-- requirements.txt
-|-- setup.py
+|-- pyproject.toml
+|-- src
+    |-- codesum
+        |-- __init__.py
+        |-- app.py
+        |-- config.py
+        |-- file_utils.py
+        |-- openai_utils.py
+        |-- prompts
+            |-- system_readme.md
+            |-- system_summary.md
+        |-- summary_utils.py
+        |-- tui.py
 
 ```
 
 ---
-## File: app.py
+## File: pyproject.toml
+
+```toml
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codesum"
+version = "0.1.1" # Incremented version
+authors = [
+  { name="Your Name", email="your.email@example.com" },
+]
+description = "Interactive code summarizer using AI and TUI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console :: Curses",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Utilities",
+]
+keywords = ["code", "summary", "ai", "openai", "tui", "curses", "documentation"]
+
+dependencies = [
+    "openai",
+    "pathspec",
+    "python-dotenv",
+    "pyperclip",
+    "platformdirs >= 4.0.0",
+    "windows-curses; sys_platform == 'win32'",
+    "importlib-resources; python_version < '3.9'", # Backport for older Python
+]
+
+[project.scripts]
+codesum = "codesum.app:main"
+
+# --- Add these sections for package data ---`
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+codesum = ["prompts/*.md"]
+# --------------------------------------------
+```
+---
+## File: src/codesum/app.py
+
+```py
+# src/codesum/app.py
+
+import sys
+import argparse # Import argparse
+from pathlib import Path
+from openai import OpenAI # Just for type hint
+
+# Import from our modules
+# Use explicit relative imports
+from . import config
+from . import file_utils
+from . import tui
+from . import summary_utils
+from . import openai_utils
+
+def main():
+    """Main application entry point."""
+
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(
+        description="Generate code summaries optimized for LLMs, with an interactive TUI."
+    )
+    parser.add_argument(
+        "--configure",
+        action="store_true",
+        help="Run the interactive configuration wizard for API key and model, then exit."
+    )
+    # Add other arguments here if needed in the future (e.g., --non-interactive, --output-dir)
+    args = parser.parse_args()
+
+    # --- Handle Configuration Mode ---
+    if args.configure:
+        config.configure_settings_interactive()
+        sys.exit(0) # Exit after configuration
+
+    # --- Normal Operation ---
+    base_dir = Path('.').resolve() # Use current working directory as base
+    print(f"Analyzing project root: {base_dir}")
+
+    # 1. Load Configuration (will prompt for API key if missing)
+    api_key, llm_model = config.load_or_prompt_config()
+
+    # 2. Initialize OpenAI Client (if key provided)
+    openai_client = None
+    if api_key:
+        try:
+            openai_client = OpenAI(api_key=api_key)
+            print("OpenAI client initialized.") # Add confirmation
+        except Exception as e:
+             print(f"Error initializing OpenAI client: {e}. AI features disabled.", file=sys.stderr)
+             # Proceed without client, AI features will be disabled
+    #else: # Already printed message in load_or_prompt_config
+    #    print("AI features disabled (OpenAI API Key not provided/configured).")
+
+
+    # 3. Prepare Project Directory Structure & Ignores
+    summary_utils.create_hidden_directory(base_dir)
+    gitignore_specs = file_utils.parse_gitignore(base_dir)
+    ignore_list = file_utils.DEFAULT_IGNORE_LIST # Use default ignore list
+
+    # 4. Load Previous Selection
+    previous_selection = summary_utils.read_previous_selection(base_dir) # Expects/returns absolute paths
+
+    # 5. Run Interactive File Selection
+    print("Loading file selection interface...")
+    # select_files expects absolute paths in previous_selection and returns absolute paths or empty list
+    selected_files = tui.select_files(base_dir, previous_selection, gitignore_specs, ignore_list)
+
+    if not selected_files:
+        # Check if selection was cancelled (tui returns empty list now) or genuinely empty
+        print("No files selected or selection cancelled. Exiting.")
+        return
+
+    print("\nSelected files:")
+    # Make sure selected_files contains strings before processing
+    if selected_files and isinstance(selected_files[0], str):
+        for f_abs_str in selected_files:
+            f_path = Path(f_abs_str)
+            try:
+                 # Display relative path for clarity
+                 print(f"- {f_path.relative_to(base_dir).as_posix()}")
+            except ValueError:
+                 print(f"- {f_path}") # Fallback if not relative
+    else:
+        print("Error: Invalid selection data received from TUI.", file=sys.stderr)
+        return # Exit if selection data is bad
+
+
+    # 6. Save Current Selection (absolute paths)
+    summary_utils.write_previous_selection(selected_files, base_dir)
+    print(f"\nSelection saved to '{summary_utils.SUMMARY_DIR_NAME}/{summary_utils.SELECTION_FILENAME}'.")
+
+    # 7. Create Local Code Summary (Full Content)
+    summary_utils.create_code_summary(selected_files, base_dir)
+    local_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.CODE_SUMMARY_FILENAME
+    print(f"Local code summary (full content) created in '{local_summary_path}'.")
+
+    # 8. Copy to Clipboard
+    summary_utils.copy_summary_to_clipboard(base_dir)
+
+    # 9. Handle Optional AI Features
+    if openai_client:
+        try:
+            # Ask about compressed summary
+            generate_compressed_q = input("\nGenerate AI-powered compressed summary? (y/N): ").strip().lower()
+            if generate_compressed_q == 'y':
+                print("Generating compressed summary...") # Give feedback
+                summary_utils.create_compressed_summary(selected_files, openai_client, llm_model, base_dir)
+                compressed_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.COMPRESSED_SUMMARY_FILENAME
+                print(f"\nAI-powered compressed code summary created in '{compressed_summary_path}'.")
+
+                # Ask about README generation (only if compressed summary was made)
+                if compressed_summary_path.exists():
+                    generate_readme_q = input("Generate/Update README.md using AI summary? (y/N): ").strip().lower()
+                    if generate_readme_q == 'y':
+                        print("Generating README...") # Give feedback
+                        try:
+                            with open(compressed_summary_path, "r", encoding='utf-8') as f:
+                                compressed_summary_content = f.read()
+
+                            if compressed_summary_content.strip():
+                                readme_content = openai_utils.generate_readme(openai_client, llm_model, compressed_summary_content)
+                                readme_file = base_dir / "README.md" # In project root
+                                with open(readme_file, "w", encoding='utf-8') as f:
+                                    f.write(readme_content)
+                                print(f"\nUpdated '{readme_file}' successfully.")
+                            else:
+                                print("Compressed summary is empty. Skipping README generation.", file=sys.stderr)
+
+                        except FileNotFoundError:
+                            print(f"Error: Compressed summary file '{compressed_summary_path}' not found.", file=sys.stderr)
+                        except Exception as e:
+                            print(f"Error during README generation: {e}", file=sys.stderr)
+                # else: # No need for this else, compressed summary path existence is checked above
+                #    print("Compressed summary file not found. Skipping README generation prompt.", file=sys.stderr)
+
+        except EOFError:
+             print("\nInput interrupted during AI feature prompts.")
+        except Exception as e:
+             print(f"\nAn error occurred during AI feature processing: {e}", file=sys.stderr)
+    else:
+        # Message about disabled AI features is now printed earlier during config load
+        # We can add a reminder here if needed, but might be redundant.
+        # print("\nSkipping AI features (OpenAI client not available/configured).")
+        pass # No client, skip AI section
+
+    print("\nProcess finished.")
+
+
+if __name__ == "__main__":
+    # This allows running 'python -m codesum.app'
+    main()
+```
+---
+## File: src/codesum/config.py
+
+```py
+# src/codesum/config.py
+
+import os
+from pathlib import Path
+import platformdirs
+from dotenv import load_dotenv, set_key, find_dotenv, unset_key
+import sys
+
+APP_NAME = "codesum"
+CONFIG_DIR = Path(platformdirs.user_config_dir(APP_NAME))
+CONFIG_FILE = CONFIG_DIR / "settings.env"
+
+DEFAULT_LLM_MODEL = "gpt-4o" # Keep a default
+
+# Simple flag for verbose debugging output
+DEBUG_CONFIG = False # Set to True locally if you need deep tracing
+
+def _debug_print(msg):
+    """Helper for conditional debug printing."""
+    if DEBUG_CONFIG:
+        print(f"[Config Debug] {msg}", file=sys.stderr) # Print to stderr
+
+def ensure_config_paths():
+    """Ensures the configuration directory and file exist."""
+    _debug_print(f"Ensuring config path: {CONFIG_FILE}")
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        if not CONFIG_FILE.is_file():
+            CONFIG_FILE.touch()
+            print(f"Created configuration file: {CONFIG_FILE}") # Inform user
+    except OSError as e:
+        print(f"Warning: Error creating configuration path {CONFIG_FILE}: {e}", file=sys.stderr)
+
+def load_config() -> tuple[str | None, str]:
+    """
+    Loads configuration from the user's config file. Does NOT prompt.
+    Returns: (api_key, llm_model)
+    """
+    _debug_print(f"Attempting to load config from: {CONFIG_FILE}")
+    ensure_config_paths() # Make sure file exists
+
+    # Load from the specific file, potentially overriding existing os.environ vars
+    # This is important if the user somehow has system-wide vars set.
+    load_dotenv(dotenv_path=CONFIG_FILE, override=True)
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    llm_model = os.getenv("LLM_MODEL") # Load raw value first
+    _debug_print(f"Loaded from env after load_dotenv - API Key Present: {bool(api_key)}, Model Raw: '{llm_model}'")
+
+    # Handle empty string values from .env as None/Default
+    if not api_key: # Catches None and ""
+        api_key = None
+    if not llm_model: # Catches None and ""
+        _debug_print(f"LLM_MODEL not found or empty, using default: {DEFAULT_LLM_MODEL}")
+        llm_model = DEFAULT_LLM_MODEL
+    # else: # Model was found and not empty
+    #    _debug_print(f"Using LLM_MODEL from config: {llm_model}")
+
+
+    _debug_print(f"load_config returning - API Key Present: {bool(api_key)}, Model: '{llm_model}'")
+    return api_key, llm_model
+
+def save_config(api_key: str | None, llm_model: str):
+    """
+    Saves the provided configuration to the user's config file.
+    Updates os.environ for the current process.
+    """
+    _debug_print(f"Attempting to save config to: {CONFIG_FILE}")
+    ensure_config_paths()
+    try:
+        # Ensure model has a value before saving
+        final_llm_model = llm_model if llm_model else DEFAULT_LLM_MODEL
+        _debug_print(f"Saving - API Key: {'SET' if api_key else 'UNSET'}, Model: '{final_llm_model}'")
+
+        # Use find_dotenv to get the reliable path for set/unset_key
+        # Important: usecwd=False ensures it looks at the absolute path provided
+        dotenv_path = find_dotenv(filename=str(CONFIG_FILE), raise_error_if_not_found=False, usecwd=False)
+        if not dotenv_path or not Path(dotenv_path).exists():
+             # If find_dotenv fails (e.g., empty file?), fallback to the explicit path
+             dotenv_path = str(CONFIG_FILE)
+             _debug_print(f"find_dotenv didn't find {CONFIG_FILE}, using direct path.")
+        else:
+             _debug_print(f"find_dotenv located config at: {dotenv_path}")
+
+
+        # Save/Unset API Key
+        if api_key:
+            set_key(dotenv_path, "OPENAI_API_KEY", api_key, quote_mode="never")
+            _debug_print(f"Set OPENAI_API_KEY in {dotenv_path}")
+        else:
+            # Only unset if the key exists in the file, prevents errors on clean files
+            if os.getenv("OPENAI_API_KEY"): # Check current env *after* load_dotenv
+                 unset_key(dotenv_path, "OPENAI_API_KEY")
+                 _debug_print(f"Unset OPENAI_API_KEY in {dotenv_path}")
+            else:
+                 _debug_print(f"Skipped unsetting OPENAI_API_KEY (was not set).")
+
+        # Always set/update the model
+        set_key(dotenv_path, "LLM_MODEL", final_llm_model, quote_mode="never")
+        _debug_print(f"Set LLM_MODEL='{final_llm_model}' in {dotenv_path}")
+
+        # --- Crucial: Update os.environ for the *current* process ---
+        # This ensures that if save_config is called mid-way (like in load_or_prompt),
+        # subsequent calls to os.getenv() in the same run reflect the change.
+        os.environ["OPENAI_API_KEY"] = api_key if api_key else ""
+        os.environ["LLM_MODEL"] = final_llm_model
+        _debug_print(f"Updated os.environ - API Key Present: {bool(os.environ.get('OPENAI_API_KEY'))}, Model: '{os.environ.get('LLM_MODEL')}'")
+        # --- End Crucial Update ---
+
+        print(f"Configuration saved to {CONFIG_FILE}") # User message
+        return True
+    except Exception as e:
+        print(f"Error saving configuration to {CONFIG_FILE}: {e}", file=sys.stderr)
+        # Print traceback for detailed debugging if needed
+        # import traceback
+        # traceback.print_exc()
+        return False
+
+def prompt_for_api_key_interactive() -> str | None:
+    """Interactively prompts the user ONLY for the API key."""
+    _debug_print("Prompting user for API key.")
+    print("-" * 30)
+    print(f"OpenAI API Key not found in {CONFIG_FILE}") # Be specific
+    try:
+        api_key_input = input("Please enter your OpenAI API Key (leave blank to skip AI features): ").strip()
+        print("-" * 30) # Print separator after input
+        if api_key_input:
+            print("API Key provided.") # User feedback
+            _debug_print("User provided API key.")
+            return api_key_input
+        else:
+            print("Skipping AI features for this session as no API key was provided.") # User feedback
+            _debug_print("User skipped providing API key.")
+            return None
+    except EOFError:
+        print("\nInput interrupted. Skipping AI features.")
+        print("-" * 30)
+        _debug_print("Input interrupted (EOFError).")
+        return None
+    except Exception as e:
+        print(f"\nError during input: {e}. Skipping AI features.")
+        print("-" * 30)
+        _debug_print(f"Input error: {e}")
+        return None
+
+def configure_settings_interactive():
+    """Runs an interactive wizard to configure API key and model."""
+    print("--- CodeSum Configuration ---")
+    print(f"Editing configuration file: {CONFIG_FILE}") # Make it clear
+
+    current_api_key, current_llm_model = load_config() # Load fresh values
+    _debug_print(f"Loaded for configure wizard - API Key Present: {bool(current_api_key)}, Model: '{current_llm_model}'")
+
+
+    print(f"\nCurrent OpenAI API Key: {'Set' if current_api_key else 'Not Set'}")
+    print(f"Current LLM Model: {current_llm_model}")
+    print("-" * 30)
+
+    try:
+        # Prompt for API Key
+        api_key_prompt = f"Enter new OpenAI API Key (leave blank to {'keep current' if current_api_key else 'remain unset'}, type 'clear' to remove): "
+        new_api_key_input = input(api_key_prompt).strip()
+
+        final_api_key = current_api_key # Start with current value
+
+        if new_api_key_input.lower() == 'clear':
+            final_api_key = None
+            print("API Key will be cleared.")
+        elif new_api_key_input: # If user entered something non-blank and not 'clear'
+            final_api_key = new_api_key_input
+            print("API Key will be updated.")
+        # else: User left blank, final_api_key remains current_api_key
+        #     print("API Key remains unchanged.")
+
+        # Prompt for Model
+        model_prompt = f"Enter new LLM Model (leave blank to keep '{current_llm_model}'): "
+        new_llm_model_input = input(model_prompt).strip()
+
+        final_llm_model = current_llm_model # Start with current
+
+        if new_llm_model_input:
+            final_llm_model = new_llm_model_input
+            print(f"LLM Model will be set to '{final_llm_model}'.")
+        # else: User left blank, final_llm_model remains current_llm_model
+        #     print(f"LLM Model remains '{final_llm_model}'.")
+
+
+        # Ensure final_llm_model is never None or empty before saving
+        if not final_llm_model:
+             _debug_print("Final LLM model was empty/None, setting to default.")
+             final_llm_model = DEFAULT_LLM_MODEL
+
+
+        # Save the final configuration
+        print("-" * 30)
+        if save_config(final_api_key, final_llm_model):
+            # No need to print success again, save_config does it.
+            pass
+        else:
+            print("Configuration update failed.") # Should already be printed by save_config
+
+    except EOFError:
+        print("\nConfiguration cancelled.")
+    except Exception as e:
+        print(f"\nAn error occurred during configuration: {e}")
+
+    print("--- Configuration End ---")
+
+
+def load_or_prompt_config() -> tuple[str | None, str]:
+    """
+    Loads config. If API key is missing, prompts the user interactively
+    and saves it if provided. Updates current session's environment.
+    Returns the loaded/updated (api_key, llm_model).
+    """
+    _debug_print("Running load_or_prompt_config...")
+    api_key, llm_model = load_config() # Load initial state from file/env
+    _debug_print(f"Initial load result - API Key Present: {bool(api_key)}, Model: '{llm_model}'")
+
+    # Check if the key is missing *after* attempting to load it
+    key_is_missing = not api_key
+
+    if key_is_missing:
+        _debug_print("API key not found, entering prompt.")
+        new_api_key = prompt_for_api_key_interactive() # Ask user
+        if new_api_key:
+            _debug_print("Prompt returned a new API key. Saving it.")
+            # Save the newly entered key, preserving the loaded (or default) model
+            if save_config(new_api_key, llm_model):
+                 # IMPORTANT: Update the key variable for *this function's return value*
+                 api_key = new_api_key
+                 _debug_print("Successfully saved new key and updated session key variable.")
+                 # os.environ was updated inside save_config
+            else:
+                 _debug_print("Failed to save the new API key.")
+                 # api_key remains None
+        # else: # User didn't provide a key when prompted
+        #    _debug_print("Prompt did not return a new API key.")
+
+    # Print status for the user AFTER potential prompt/save
+    print(f"Using configuration file: {CONFIG_FILE}") # Good to remind user
+    if api_key:
+        # Don't print the key itself, just confirm it's set
+        print(f"OpenAI API Key: Set")
+        print(f"Using model: {llm_model}")
+    else:
+        print("OpenAI API Key: Not Set. AI features will be disabled.")
+
+    _debug_print(f"load_or_prompt_config returning - API Key Present: {bool(api_key)}, Model: '{llm_model}'")
+    return api_key, llm_model
+```
+---
+## File: src/codesum/file_utils.py
 
 ```py
 import os
-import curses
-import json
-import hashlib
 from pathlib import Path
-from openai import OpenAI
-from dotenv import load_dotenv
-import argparse
 import pathspec
-import pyperclip
-import sys 
 
-load_dotenv()
+# Consider making this configurable or loaded from a file in future
+DEFAULT_IGNORE_LIST = [
+    ".git", "venv", ".summary_files", "__pycache__",
+    ".vscode", ".idea", "node_modules", "build", "dist",
+    "*.pyc", "*.pyo", "*.egg-info", ".DS_Store",
+    ".env" # Also ignore local .env files if any
+]
 
-IGNORE_LIST = [".git", "venv", ".summary_files", "__pycache__"] # Added __pycache__ as common ignore
+def parse_gitignore(directory: Path = Path('.')) -> pathspec.PathSpec | None:
+    """Parses .gitignore file in the specified directory."""
+    gitignore_path = directory / ".gitignore"
+    gitignore_specs = None
+    if gitignore_path.exists():
+        try:
+            with open(gitignore_path, "r", encoding='utf-8') as f:
+                lines = [line for line in f.read().splitlines() if line.strip() and not line.strip().startswith('#')]
+            if lines:
+                gitignore_specs = pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, lines)
+        except IOError as e:
+            print(f"Warning: Could not read .gitignore file: {e}", file=sys.stderr)
+        except Exception as e:
+             print(f"Warning: Error parsing .gitignore patterns: {e}", file=sys.stderr)
+    return gitignore_specs
 
-LLM_MODEL=os.getenv("LLM_MODEL", "gpt-4o")
-print(f"Using model: {LLM_MODEL}")
-
-# --- Helper Function to Check Terminal Color Support ---
-def check_color_support():
-    """Checks if the terminal likely supports colors."""
-    if not hasattr(sys.stdout, "isatty"):
-        return False
-    if not sys.stdout.isatty():
-        return False  # Not a tty
-    # Simple check, might need refinement for specific terminals
-    term = os.getenv('TERM')
-    if term and 'color' in term:
-        return True
-    # Add more checks if needed (e.g., specific TERM values)
-    return False # Default to no color if unsure
-
-# --- Constants for Curses Colors ---
-# Define color pair IDs
-COLOR_PAIR_DEFAULT = 0
-COLOR_PAIR_FOLDER = 1
-
-def build_tree(directory, gitignore_specs, ignore_list):
+def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignore_list: list[str]):
+    """Builds a nested dictionary representing the directory structure, respecting ignores."""
     tree = {}
-    start_dir_level = directory.count(os.sep) # Get starting depth
-    for root, dirs, files in os.walk(directory, topdown=True): # topdown=True is default but explicit
-        # Convert paths to relative paths for gitignore matching and display
-        rel_root = os.path.relpath(root, directory)
-        if rel_root == '.':
-             rel_root = "" # Use empty string for root
+    base_dir_path = Path(directory).resolve() # Use resolved absolute path for reliable comparison
 
-        # Filter directories based on ignore_list and gitignore
-        # We modify dirs[:] in place as required by os.walk
-        dirs[:] = [d for d in dirs
-                   if d not in ignore_list and
-                   not any(ignore_item in os.path.join(rel_root, d) for ignore_item in ignore_list) and # Check full path part
-                   not (gitignore_specs and gitignore_specs.match_file(os.path.join(rel_root, d) + '/'))]
+    for item_path in base_dir_path.rglob('*'): # Use rglob for recursive walk
+        try:
+            # Get path relative to the starting directory
+            relative_path = item_path.relative_to(base_dir_path)
+            relative_path_str = str(relative_path.as_posix()) # Use posix for consistent matching
 
-        # Find the correct position in the tree dictionary
-        current = tree
-        # Handle root case correctly
-        path_parts = Path(rel_root).parts
-        for part in path_parts:
-             # Create nested dicts only if needed
-             current = current.setdefault(part, {})
+            # 1. Check explicit ignore_list (faster check)
+            if any(part in ignore_list for part in relative_path.parts):
+                continue
+            # Check if any parent dir is in ignore list (e.g. ignoring 'node_modules' should ignore everything inside)
+            if any(ignore_item in parent.name for parent in relative_path.parents for ignore_item in ignore_list if parent != Path('.')):
+                 continue
 
-        # Filter files based on gitignore
-        for file in files:
-            rel_path = os.path.join(rel_root, file)
-            # Double check ignore list for files too
-            if not any(ignore_item in rel_path for ignore_item in ignore_list):
-                 if not (gitignore_specs and gitignore_specs.match_file(rel_path)):
-                    # Store the full path as value
-                    current[file] = os.path.join(root, file) # Use original root here
+
+            # 2. Check .gitignore
+            # Use as_posix() for pathspec matching, add trailing slash for dirs
+            check_path = relative_path_str + '/' if item_path.is_dir() else relative_path_str
+            if gitignore_specs and gitignore_specs.match_file(check_path):
+                continue
+
+            # If not ignored, add to tree
+            current_level = tree
+            parts = relative_path.parts
+
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1: # Last part (file or dir name)
+                    if item_path.is_file():
+                        # Store full absolute path as value for files
+                        current_level[part] = str(item_path)
+                    elif item_path.is_dir():
+                         # Ensure directory entry exists, could be empty
+                         current_level = current_level.setdefault(part, {})
+                else: # Intermediate directory part
+                    current_level = current_level.setdefault(part, {})
+
+        except PermissionError:
+            # print(f"Warning: Permission denied accessing {item_path}", file=sys.stderr)
+            continue # Skip files/dirs we can't access
+        except Exception as e:
+            print(f"Warning: Error processing path {item_path}: {e}", file=sys.stderr)
+            continue
 
     return tree
 
 
 def flatten_tree(tree, prefix=''):
-    """Flattens the tree ensuring parent files come before child files."""
+    """Flattens the tree for display, ensuring files come before subdirs at each level."""
     items = []
     # Process files at the current level first, sorted alphabetically
-    for key, value in sorted(tree.items()):
-        if not isinstance(value, dict):  # It's a file
-            # Ensure prefix ends with / if it's not empty
-            current_prefix = prefix if not prefix or prefix.endswith('/') else prefix + '/'
-            # Handle root files (prefix is empty)
-            display_name = f"{current_prefix}{key}" if prefix else key
-            items.append((display_name, value)) # (display name, full path)
+    files_at_level = {}
+    dirs_at_level = {}
 
-    # Then recurse into subdirectories, sorted alphabetically
-    for key, value in sorted(tree.items()):
-        if isinstance(value, dict):  # It's a directory
-            # Ensure prefix ends with / if it's not empty
-            current_prefix = prefix if not prefix or prefix.endswith('/') else prefix + '/'
-            # Handle root folders (prefix is empty)
-            dir_prefix = f"{current_prefix}{key}" if prefix else key
-            items.extend(flatten_tree(value, prefix=dir_prefix))
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            dirs_at_level[key] = value
+        else:
+            files_at_level[key] = value
+
+    # Add sorted files
+    for key, full_path in sorted(files_at_level.items()):
+        display_name = f"{prefix}{key}"
+        items.append((display_name, full_path)) # (display name, full path)
+
+    # Then recurse into sorted subdirectories
+    for key, sub_tree in sorted(dirs_at_level.items()):
+        dir_prefix = f"{prefix}{key}/"
+        items.extend(flatten_tree(sub_tree, prefix=dir_prefix))
+
     return items
 
+def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathSpec | None = None, ignore_list: list[str] = DEFAULT_IGNORE_LIST) -> str:
+    """Generates a string representation of the directory tree, respecting ignores."""
+    output = ".\n"
+    # We use os.walk here as it's often more efficient for simple listing
+    # Need to re-implement the ignore logic within the walk loop
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Generate code summaries and README.")
-    # Keep --infer flag if needed for summary generation logic
-    parser.add_argument("--infer", action="store_true", help="Enable OpenAI calls for summaries and readme (Currently not implemented in main flow)")
-    return parser.parse_args()
+    start_dir = str(directory.resolve())
 
-# Check if API key exists before initializing client
-if os.getenv("OPENAI_API_KEY"):
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-else:
-    client = None
-    print("Warning: OPENAI_API_KEY not found in environment. AI features will be disabled.")
+    for root, dirs, files in os.walk(start_dir, topdown=True):
+        current_dir_path = Path(root)
+        relative_dir_path = current_dir_path.relative_to(start_dir)
+        level = len(relative_dir_path.parts)
+        indent = ' ' * (4 * level)
+
+        # Filter dirs based on ignore_list and gitignore BEFORE adding parent to output
+        original_dirs = list(dirs) # Copy before modifying dirs[:]
+        dirs[:] = [d for d in original_dirs if
+                   d not in ignore_list and
+                   not any(part in ignore_list for part in (relative_dir_path / d).parts) and
+                   not (gitignore_specs and gitignore_specs.match_file(str((relative_dir_path / d).as_posix()) + '/'))
+                  ]
+
+        # Filter files based on ignore_list and gitignore
+        filtered_files = [f for f in files if
+                          f not in ignore_list and
+                           not any(part in ignore_list for part in (relative_dir_path / f).parts) and
+                          not (gitignore_specs and gitignore_specs.match_file(str((relative_dir_path / f).as_posix())))
+                         ]
+
+        # Combine and sort entries for the current level
+        entries = sorted(dirs + filtered_files)
+
+        for entry in entries:
+             output += f"{indent}|-- {entry}\n"
+
+        # Important: Stop os.walk from descending into ignored directories earlier
+        # We already modified dirs[:] above based on ignores, so os.walk won't enter them
 
 
-def create_hidden_directory():
-    hidden_directory = Path(".summary_files")
-    try:
-        hidden_directory.mkdir(exist_ok=True) # exist_ok avoids error if it exists
-    except OSError as e:
-        print(f"Error creating directory {hidden_directory}: {e}")
-        pass # Or sys.exit(1)
-
-def get_tree_output():
-    output = ""
-    gitignore_specs = parse_gitignore() 
-
-    def walk_directory_tree_recursive(directory, level, current_output=""):
-        # Base ignore list check
-        if any(ignore_item in Path(directory).name for ignore_item in IGNORE_LIST):
-             return current_output
-
+    # Cleanup duplicate root entry if os.walk adds it weirdly
+    # This simple loop approach might be cleaner:
+    output_lines = [".\n"]
+    def walk_recursive(current_path: Path, level: int):
         try:
-            entries = os.listdir(directory)
+            entries = sorted(os.listdir(current_path))
         except OSError:
-            return current_output # Cannot list dir
+            return # Cannot list dir
 
         indent = ' ' * (4 * level)
-        for entry in sorted(entries):
-            entry_path = os.path.join(directory, entry)
-            relative_entry_path = os.path.relpath(entry_path, ".")
+        for entry in entries:
+            entry_path = current_path / entry
+            relative_entry_path = entry_path.relative_to(directory.resolve())
+            relative_entry_str = str(relative_entry_path.as_posix())
 
-            # Check ignore list first (more efficient)
-            if any(ignore_item in relative_entry_path for ignore_item in IGNORE_LIST):
+            # Check ignore list first
+            if any(part in ignore_list for part in relative_entry_path.parts):
                 continue
 
             # Check gitignore
-            check_path = relative_entry_path + '/' if os.path.isdir(entry_path) else relative_entry_path
+            check_path = relative_entry_str + '/' if entry_path.is_dir() else relative_entry_str
             if gitignore_specs and gitignore_specs.match_file(check_path):
                 continue
 
             # If not ignored, add to output and recurse if dir
-            current_output += f"{indent}|-- {entry}\n"
-            if os.path.isdir(entry_path):
-                current_output = walk_directory_tree_recursive(entry_path, level + 1, current_output)
-        return current_output
+            output_lines.append(f"{indent}|-- {entry}\n")
+            if entry_path.is_dir():
+                walk_recursive(entry_path, level + 1)
 
-    tree_output = ".\n" + walk_directory_tree_recursive(".", 0)
-    return tree_output
+    walk_recursive(directory.resolve(), 0)
+    return "".join(output_lines)
+```
+---
+## File: src/codesum/openai_utils.py
+
+```py
+import os
+import sys
+from openai import OpenAI, RateLimitError, APIError, APITimeoutError
+from pathlib import Path
+
+# Conditional import for importlib.resources
+if sys.version_info < (3, 9):
+    import importlib_resources
+    pkg_resources = importlib_resources
+else:
+    import importlib.resources as pkg_resources
 
 
-def generate_summary(file_content):
+def _load_prompt(prompt_filename: str) -> str:
+    """Loads a prompt template from the package data."""
+    try:
+        # Use importlib.resources to access package data reliably
+        resource_path = pkg_resources.files("codesum") / "prompts" / prompt_filename
+        return resource_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        err_msg = f"Error: Prompt file '{prompt_filename}' not found in package data."
+        print(err_msg, file=sys.stderr)
+        return err_msg # Return error message as fallback prompt content
+    except Exception as e:
+        err_msg = f"Error reading prompt file '{prompt_filename}': {e}"
+        print(err_msg, file=sys.stderr)
+        return err_msg # Return error message as fallback prompt content
+
+
+def generate_summary(client: OpenAI, model: str, file_content: str) -> str:
+    """Generates a code summary using the OpenAI API."""
     if not client:
-        print("OpenAI client not initialized. Cannot generate summary.")
         return "Error: OpenAI client not available."
+
+    system_prompt = _load_prompt("system_summary.md")
+    if system_prompt.startswith("Error:"):
+        return system_prompt # Return error if prompt loading failed
+
     print("Waiting for summary. This may take a few minutes...")
     try:
         completion = client.chat.completions.create(
-            model=LLM_MODEL,
+            model=model,
             messages=[
-                {"role": "system", "content": "You are a code documenter. Your purpose is to provide useful summaries for "
-                                              "inclusion as reference for future prompts. Provide a concise summary of the "
-                                              "given code and any notes that will be useful for other ChatBots to understand how it works. "
-                                              "Include specific documentation about each function, class, and relevant parameters."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": file_content}
             ],
-            max_tokens=2500 # Consider making this configurable
+            max_tokens=2500, # Consider making this configurable
+            temperature=0.3 # Lower temperature for more focused summaries
         )
         summary = completion.choices[0].message.content
-        return summary
+        return summary if summary else "Error: Empty summary received from API."
+    except RateLimitError:
+         print("Error: OpenAI API rate limit exceeded. Please try again later.", file=sys.stderr)
+         return "Error: API rate limit exceeded."
+    except APITimeoutError:
+         print("Error: OpenAI API request timed out. Please try again later.", file=sys.stderr)
+         return "Error: API request timed out."
+    except APIError as e:
+        print(f"Error: OpenAI API returned an error: {e}", file=sys.stderr)
+        return f"Error: OpenAI API error: {e}"
     except Exception as e:
-        print(f"Error calling OpenAI API for summary: {e}")
+        print(f"Error calling OpenAI API for summary: {e}", file=sys.stderr)
         return f"Error generating summary: {e}"
 
 
-def generate_readme(compressed_summary):
+def generate_readme(client: OpenAI, model: str, compressed_summary: str) -> str:
+    """Generates a README.md file content using the OpenAI API."""
     if not client:
-        print("OpenAI client not initialized. Cannot generate README.")
         return "Error: OpenAI client not available."
+
+    system_prompt = _load_prompt("system_readme.md")
+    if system_prompt.startswith("Error:"):
+        return f"# README Generation Error\n\n{system_prompt}" # Return error
+
     print("Generating updated README.md file...")
     try:
-        # Using a slightly different model as originally specified, keep if intentional
         completion = client.chat.completions.create(
-            model="gpt-4-1106-preview", # or LLM_MODEL
+            model=model,
             messages=[
-                {"role": "system", "content": "You are a code documenter. Your task is to create an updated README.md file for a project "
-                                              "using the compressed code summary provided. Make it look nice, use emoji, and include the "
-                                              "following sections: Project Description, Installation, and Usage. You can also include a "
-                                              "section for Acknowledgements and a section for License."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": compressed_summary}
             ],
-            max_tokens=1500 # Consider making this configurable
+            max_tokens=1500, # Consider making this configurable
+            temperature=0.5 # Slightly higher temp for creative README
         )
         readme_content = completion.choices[0].message.content
-        return readme_content
+        return readme_content if readme_content else "# README Generation Error\n\nEmpty content received from API."
+    except RateLimitError:
+         print("Error: OpenAI API rate limit exceeded. Cannot generate README.", file=sys.stderr)
+         return "# README Generation Error\n\nAPI rate limit exceeded."
+    except APITimeoutError:
+         print("Error: OpenAI API request timed out. Cannot generate README.", file=sys.stderr)
+         return "# README Generation Error\n\nAPI request timed out."
+    except APIError as e:
+        print(f"Error: OpenAI API returned an error during README generation: {e}", file=sys.stderr)
+        return f"# README Generation Error\n\nOpenAI API error:\n```\n{e}\n```"
     except Exception as e:
-        print(f"Error calling OpenAI API for README: {e}")
-        return f"# README Generation Error\n\nAn error occurred while generating the README:\n\n```\n{e}\n```"
+        print(f"Error calling OpenAI API for README: {e}", file=sys.stderr)
+        return f"# README Generation Error\n\nAn error occurred:\n```\n{e}\n```"
+```
+---
+## File: src/codesum/prompts/system_readme.md
 
+```md
+You are a code documenter. Your task is to create an updated README.md file for a project using the compressed code summary provided. Make it look nice, use emoji, and include the following sections: Project Description, Installation, and Usage. You can also include a section for Acknowledgements and a section for License.
+```
+---
+## File: src/codesum/prompts/system_summary.md
 
-def create_compressed_summary(selected_files):
-    """Creates a compressed summary markdown file using AI for non-main files."""
-    summary_directory = Path(".summary_files")
-    compressed_summary_file = summary_directory / "compressed_code_summary.md"
-    if not summary_directory.exists():
-         print(f"Warning: Summary directory {summary_directory} does not exist. Skipping summary generation.")
-         return # Or create it: create_hidden_directory()
+```md
+You are a code documenter. Your purpose is to provide useful summaries for inclusion as reference for future prompts. Provide a concise summary of the given code and any notes that will be useful for other ChatBots to understand how it works. Include specific documentation about each function, class, and relevant parameters.
+```
+---
+## File: src/codesum/summary_utils.py
 
-    # Ensure selected_files contains full paths, not just display names
-    full_selected_paths = [Path(f) for f in selected_files]
+```py
+import json
+import hashlib
+from pathlib import Path
+import sys
 
+from openai import OpenAI # Type hint
+import pyperclip
+
+# Import functions from other modules within the package
+from . import openai_utils
+from . import file_utils
+
+SUMMARY_DIR_NAME = ".summary_files"
+CODE_SUMMARY_FILENAME = "code_summary.md"
+COMPRESSED_SUMMARY_FILENAME = "compressed_code_summary.md"
+SELECTION_FILENAME = "previous_selection.json"
+METADATA_SUFFIX = "_metadata.json"
+
+def get_summary_dir(base_dir: Path = Path('.')) -> Path:
+    """Gets the path to the summary directory within the base directory."""
+    return base_dir.resolve() / SUMMARY_DIR_NAME
+
+def create_hidden_directory(base_dir: Path = Path('.')):
+    """Creates the hidden summary directory if it doesn't exist."""
+    hidden_directory = get_summary_dir(base_dir)
     try:
-        # Overwrite existing compressed summary
-        with open(compressed_summary_file, "w") as summary:
-            tree_output = get_tree_output() # Get fresh tree output
-            summary.write(f"Project Structure:\n```\n{tree_output}\n```\n\n---\n")
+        hidden_directory.mkdir(exist_ok=True)
+    except OSError as e:
+        print(f"Error creating directory {hidden_directory}: {e}", file=sys.stderr)
+        # Decide if this is fatal or not, maybe return False?
+        # For now, just print error and continue
 
-            for file_path_obj in full_selected_paths:
-                relative_path_str = str(file_path_obj.relative_to(".")) # Use relative path for keys/display
-                file_path_str = str(file_path_obj) # Keep full path for reading
-
-                # Define metadata path based on relative structure
-                metadata_directory = summary_directory / file_path_obj.parent.relative_to(".")
-                metadata_directory.mkdir(parents=True, exist_ok=True)
-                metadata_path = metadata_directory / f"{file_path_obj.name}_metadata.json"
-
-                file_summary = "" # Initialize summary variable
-
-                # Special handling for a specific file (e.g., main.py) - include full content
-                # Adjust filename check if needed
-                if file_path_obj.name == "main.py": # Example check
-                    summary.write(f"\n## File: {relative_path_str}\n\nFull Content:\n```python\n") # Assume python, adjust if needed
-                    try:
-                        with open(file_path_str, "r", encoding='utf-8') as f:
-                            file_content = f.read()
-                        summary.write(file_content)
-                    except Exception as e:
-                        summary.write(f"\nError reading file: {e}\n")
-                    summary.write("\n```\n---\n")
-                    continue # Skip AI summary for this file
-
-                # --- AI Summary Generation with Hashing ---
-                try:
-                    with open(file_path_str, "r", encoding='utf-8') as f:
-                        file_content = f.read()
-                    current_hash = hashlib.md5(file_content.encode("utf-8")).hexdigest()
-                except Exception as e:
-                    print(f"Error reading file {relative_path_str} for hashing: {e}")
-                    summary.write(f"\n## File: {relative_path_str}\n\nError reading file: {e}\n---\n")
-                    continue # Skip this file
-
-                # Check cache
-                use_cached = False
-                if metadata_path.exists():
-                    try:
-                        with open(metadata_path, "r") as metadata_file:
-                            metadata = json.load(metadata_file)
-                        saved_hash = metadata.get("hash")
-                        if saved_hash == current_hash:
-                            print(f"File '{relative_path_str}' unchanged. Using cached summary.")
-                            file_summary = metadata.get("summary", "Error: Cached summary not found.")
-                            use_cached = True
-                        else:
-                            print(f"File '{relative_path_str}' modified. Generating new summary...")
-                    except json.JSONDecodeError:
-                        print(f"Warning: Corrupted metadata for {relative_path_str}. Regenerating summary.")
-                    except Exception as e:
-                         print(f"Error reading metadata for {relative_path_str}: {e}. Regenerating summary.")
-
-                # Generate summary if not cached or cache invalid/missing
-                if not use_cached:
-                    if client: # Check if OpenAI client is available
-                         print(f"Generating summary for {relative_path_str}...")
-                         file_summary = generate_summary(file_content)
-                         # Cache the new summary and hash
-                         metadata = {"hash": current_hash, "summary": file_summary}
-                         try:
-                             with open(metadata_path, "w") as metadata_file:
-                                 json.dump(metadata, metadata_file, indent=4)
-                         except Exception as e:
-                             print(f"Error writing metadata for {relative_path_str}: {e}")
-                    else:
-                         print(f"Skipping summary generation for {relative_path_str} (OpenAI client unavailable).")
-                         file_summary = "Summary generation skipped (OpenAI client unavailable)."
-
-
-                # Write summary to the compressed file
-                summary.write(f"\n## File: {relative_path_str}\n\nSummary:\n```markdown\n")
-                summary.write(file_summary)
-                summary.write("\n```\n---\n")
-                print(f"Processed summary for: {relative_path_str}")
-                print("-----------------------------------")
-
-
-    except IOError as e:
-        print(f"Error writing compressed summary file {compressed_summary_file}: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred during compressed summary creation: {e}")
-
-
-def parse_gitignore():
-    gitignore_path = Path(".gitignore")
-    gitignore_specs = None # Default to None
-    if gitignore_path.exists():
+def read_previous_selection(base_dir: Path = Path('.')) -> list[str]:
+    """Reads previously selected file paths from JSON in the summary dir."""
+    selection_file = get_summary_dir(base_dir) / SELECTION_FILENAME
+    if selection_file.exists():
         try:
-            with open(gitignore_path, "r", encoding='utf-8') as f:
-                # Filter out empty lines and comments
-                lines = [line for line in f.read().splitlines() if line.strip() and not line.strip().startswith('#')]
-            if lines: # Only create spec if there are valid lines
-                gitignore_specs = pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, lines)
+            with open(selection_file, "r", encoding='utf-8') as f:
+                previous_selection = json.load(f)
+            # Basic validation: ensure it's a list of strings (absolute paths)
+            if isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection):
+                 # Convert to absolute paths if they aren't already, though they should be stored as such
+                 return [str(Path(p).resolve()) for p in previous_selection]
+            else:
+                 print(f"Warning: Invalid format in {selection_file}. Ignoring.", file=sys.stderr)
+                 return []
+        except json.JSONDecodeError:
+            print(f"Warning: Could not decode {selection_file}. Ignoring.", file=sys.stderr)
+            return []
         except IOError as e:
-            print(f"Warning: Could not read .gitignore file: {e}")
-        except Exception as e:
-             print(f"Warning: Error parsing .gitignore patterns: {e}")
-    return gitignore_specs
+            print(f"Warning: Could not read {selection_file}: {e}. Ignoring.", file=sys.stderr)
+            return []
+    else:
+        return []
 
-def select_files(directory, previous_selection, gitignore_specs, ignore_list):
-    """Interactively selects files using curses, hiding folders and coloring paths."""
-    tree = build_tree(directory, gitignore_specs, ignore_list)
-    # flatten_tree now sorts correctly and only includes files
-    flattened_files = flatten_tree(tree) # Contains (display_name, full_path) tuples for files only
-
-    # Prepare options for curses: (display_name, full_path)
-    # We use full_path for internal tracking and selection persistence
-    options = [(display, path) for display, path in flattened_files]
-
-    # Convert previous_selection (full paths) to a set for efficient lookup
-    selected_paths = set(previous_selection)
-
-    # Check terminal support before launching curses
-    has_color = check_color_support() # Initial check
-
-    def draw_menu(stdscr, current_page, current_pos, page_size, h, w):
-        nonlocal has_color # Declare intention to modify outer scope variable here
-
-        stdscr.clear()
-
-        # Initialize colors if supported
-        if has_color:
-            try:
-                curses.start_color()
-                # Use default background (-1) if possible
-                if curses.can_change_color() and curses.COLORS >= 16: # Check for advanced capabilities
-                     curses.use_default_colors()
-                     curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_CYAN, -1)
-                     curses.init_pair(COLOR_PAIR_DEFAULT, -1, -1) # Default fg/bg
-                else:
-                     # Basic 8 colors
-                     curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_CYAN, curses.COLOR_BLACK)
-                     curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK) # Default pair
-
-            except curses.error as e:
-                # Fallback if color init fails
-                # print(f"Curses color init error: {e}") # Debugging line
-                has_color = False # Disable color if init fails
-
-        # Calculate pagination
-        start_idx = current_page * page_size
-        end_idx = min(start_idx + page_size, len(options))
-        current_options_page = options[start_idx:end_idx]
-
-        # Instructions
-        stdscr.addstr(0, 0, "Select files: [SPACE] toggle, [ENTER] confirm, [UP/DOWN] navigate, [LEFT/RIGHT] pages.")
-        stdscr.addstr(1, 0, "-" * (w - 1)) # Separator line
-
-        # Display file list
-        for idx, (display_name, full_path) in enumerate(current_options_page):
-            y_pos = idx + 2 # Start below instructions
-
-            # Determine base attribute (highlight or normal)
-            base_attr = curses.A_REVERSE if idx == current_pos else curses.A_NORMAL
-            # Always apply a color pair, default if color is disabled or no specific color needed
-            default_color_attr = curses.color_pair(COLOR_PAIR_DEFAULT) if has_color else 0
-            current_base_attr = base_attr | default_color_attr
-
-            # Checkbox
-            checkbox = "[X]" if full_path in selected_paths else "[ ]"
-            # Use current_base_attr for checkbox for consistent highlighting
-            try:
-                stdscr.addstr(y_pos, 0, f"{checkbox} ", current_base_attr)
-            except curses.error: pass # Ignore errors near edge
-            x_offset = len(checkbox) + 1
-
-            # Display name with color for path part
-            last_slash_idx = display_name.rfind('/')
-            try:
-                # Only attempt coloring if color is enabled AND a path separator exists
-                if has_color and last_slash_idx != -1:
-                    path_part = display_name[:last_slash_idx + 1]
-                    file_part = display_name[last_slash_idx + 1:]
-                    # Combine folder color with base attribute (reverse or normal)
-                    folder_attr = curses.color_pair(COLOR_PAIR_FOLDER) | (base_attr & curses.A_REVERSE)
-                    # Combine default color with base attribute
-                    file_attr = curses.color_pair(COLOR_PAIR_DEFAULT) | base_attr
-
-                    stdscr.addstr(y_pos, x_offset, path_part, folder_attr)
-                    # Ensure file part doesn't overwrite path part if screen is narrow
-                    if x_offset + len(path_part) < w:
-                         stdscr.addstr(y_pos, x_offset + len(path_part), file_part[:w - (x_offset + len(path_part)) -1], file_attr) # Truncate file_part if needed
-                else:
-                    # No path or no color: draw whole name with default color pair + base attribute
-                    stdscr.addstr(y_pos, x_offset, display_name[:w - x_offset -1], current_base_attr) # Truncate display_name
-
-            except curses.error:
-                 # Handle potential error writing near screen edge
-                 try:
-                      safe_display_name = display_name[:w - x_offset - 1] # Truncate if necessary
-                      stdscr.addstr(y_pos, x_offset, safe_display_name, current_base_attr)
-                 except curses.error:
-                      pass # Ignore if even truncated write fails
-
-
-        # Status line
-        total_pages = (len(options) + page_size - 1) // page_size if page_size > 0 else 1
-        status = f"Page {current_page + 1}/{total_pages} | Files {start_idx + 1}-{end_idx} of {len(options)} | Selected: {len(selected_paths)}"
-        try:
-            stdscr.addstr(h - 1, 0, status[:w-1], curses.A_REVERSE) # Ensure status fits width
-        except curses.error: pass # Ignore error drawing status line if window too small
-
-        stdscr.refresh()
-
-    # --- curses_main remains the same ---
-    def curses_main(stdscr):
-        nonlocal selected_paths # Allow modification of the set
-        curses.curs_set(0)  # Hide cursor
-        current_page = 0
-        current_pos = 0
-
-        while True:
-            h, w = stdscr.getmaxyx()
-            page_size = max(1, h - 4) # Ensure page_size is at least 1
-
-            items_on_current_page = min(page_size, len(options) - current_page * page_size)
-            max_pos_on_page = items_on_current_page - 1 if items_on_current_page > 0 else 0
-
-            if current_pos > max_pos_on_page:
-                 current_pos = max_pos_on_page
-
-            # Call draw_menu - it will handle color setup/fallback internally
-            draw_menu(stdscr, current_page, current_pos, page_size, h, w)
-
-            key = stdscr.getch()
-
-            # --- Key handling ---
-            # Recalculate indices for key handling based on current page/pos
-            current_abs_index = current_page * page_size + current_pos
-            total_options = len(options)
-            total_pages = (total_options + page_size - 1) // page_size if page_size > 0 else 1
-
-            if key == ord(' ') and 0 <= current_abs_index < total_options:
-                _, full_path = options[current_abs_index]
-                if full_path in selected_paths:
-                    selected_paths.remove(full_path)
-                else:
-                    selected_paths.add(full_path)
-            elif key == curses.KEY_UP:
-                if current_pos > 0:
-                    current_pos -= 1
-                elif current_page > 0: # Wrap to previous page
-                    current_page -= 1
-                    # Recalculate page size for the new page (might differ if last page is short)
-                    h_new, w_new = stdscr.getmaxyx() # Get current dimensions
-                    page_size_new = max(1, h_new - 4)
-                    # Calculate items on the new (previous) page
-                    items_on_prev_page = min(page_size_new, total_options - current_page * page_size_new)
-                    current_pos = items_on_prev_page - 1 if items_on_prev_page > 0 else 0 # Go to last item of new page
-            elif key == curses.KEY_DOWN:
-                # Recalculate items on current page before checking bounds
-                items_on_current_page = min(page_size, total_options - current_page * page_size)
-                if current_pos < items_on_current_page - 1:
-                    current_pos += 1
-                elif current_page < total_pages - 1: # Wrap to next page
-                    current_page += 1
-                    current_pos = 0 # Go to first item of new page
-            elif key == curses.KEY_LEFT:
-                 if current_page > 0:
-                    current_page -= 1
-                    current_pos = 0 # Go to first item of new page
-            elif key == curses.KEY_RIGHT:
-                 if current_page < total_pages - 1:
-                    current_page += 1
-                    current_pos = 0 # Go to first item of new page
-            elif key == 10 or key == curses.KEY_ENTER:  # Enter key
-                break # Exit loop
-            elif key == curses.KEY_RESIZE: # Handle terminal resize
-                 h_new, w_new = stdscr.getmaxyx()
-                 page_size_new = max(1, h_new - 4)
-                 items_on_current_page_new = min(page_size_new, total_options - current_page * page_size_new)
-                 max_pos_new = items_on_current_page_new - 1 if items_on_current_page_new > 0 else 0
-                 if current_pos > max_pos_new:
-                      current_pos = max_pos_new
-                 # Screen will be redrawn by draw_menu at start of next loop iteration
-            elif key == ord('q') or key == 27: # Add 'q' or ESC to quit
-                 break
-
-    # Run the curses application
+def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.')):
+    """Writes the list of selected absolute file paths to JSON."""
+    hidden_directory = get_summary_dir(base_dir)
+    selection_file = hidden_directory / SELECTION_FILENAME
+    if not hidden_directory.exists():
+        # Attempt to create it if missing
+        create_hidden_directory(base_dir)
+        if not hidden_directory.exists(): # Check again if creation failed
+             print(f"Warning: Cannot save selection, directory {hidden_directory} not found/creatable.", file=sys.stderr)
+             return
     try:
-         curses.wrapper(curses_main)
-    except curses.error as e:
-         print(f"\nCurses error occurred: {e}")
-         print("Window might be too small or terminal incompatible.")
-         # Fallback or exit cleanly
-         print("Returning currently selected files (if any).")
+        # Ensure selected_files is a list of strings (absolute paths)
+        if isinstance(selected_files, list) and all(isinstance(item, str) for item in selected_files):
+            # Store absolute paths for consistency
+            abs_paths = [str(Path(f).resolve()) for f in selected_files]
+            with open(selection_file, "w", encoding='utf-8') as f:
+                json.dump(abs_paths, f, indent=4)
+        else:
+            print("Error: Invalid data type for selected_files. Cannot save selection.", file=sys.stderr)
+    except IOError as e:
+        print(f"Error writing previous selection file {selection_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing selection data to JSON: {e}", file=sys.stderr)
 
-    # Return the final selection as a list of full paths, sorted for consistency
-    return sorted(list(selected_paths))
 
-
-def create_code_summary(selected_files):
+def create_code_summary(selected_files: list[str], base_dir: Path = Path('.')):
     """Creates a basic code summary file with full content of selected files."""
-    summary_directory = Path(".summary_files")
-    summary_file = summary_directory / "code_summary.md"
+    summary_directory = get_summary_dir(base_dir)
+    summary_file = summary_directory / CODE_SUMMARY_FILENAME
+    project_root = base_dir.resolve()
+
     if not summary_directory.exists():
-         print(f"Warning: Summary directory {summary_directory} does not exist. Skipping summary creation.")
-         return
+        print(f"Warning: Summary directory {summary_directory} does not exist. Skipping summary creation.", file=sys.stderr)
+        return
 
     try:
+        gitignore_specs = file_utils.parse_gitignore(project_root)
+        tree_output = file_utils.get_tree_output(project_root, gitignore_specs, file_utils.DEFAULT_IGNORE_LIST)
+
         with open(summary_file, "w", encoding='utf-8') as summary:
-            tree_output = get_tree_output() # Get fresh tree output
+            summary.write(f"Project Root: {project_root}\n")
             summary.write(f"Project Structure:\n```\n{tree_output}\n```\n\n---\n")
 
-            for file_path_str in selected_files: # selected_files should be full paths
+            for file_path_str in selected_files: # selected_files should be absolute paths
                 try:
                     file_path_obj = Path(file_path_str)
-                    relative_path = file_path_obj.relative_to(".")
-                    # Determine language hint for markdown block (basic example)
+                    # Calculate relative path from project root for display
+                    try:
+                        relative_path = file_path_obj.relative_to(project_root)
+                    except ValueError:
+                        relative_path = file_path_obj # Fallback if not relative (shouldn't happen often)
+
                     lang_hint = file_path_obj.suffix.lstrip('.') if file_path_obj.suffix else ""
 
-                    summary.write(f"## File: {relative_path}\n\n") # Use relative path for header
+                    summary.write(f"## File: {relative_path.as_posix()}\n\n") # Use relative path for header
                     summary.write(f"```{lang_hint}\n")
                     with open(file_path_obj, "r", encoding='utf-8') as f:
                         summary.write(f.read())
@@ -560,370 +901,438 @@ def create_code_summary(selected_files):
                 except Exception as e:
                      summary.write(f"## File: {file_path_str}\n\nError reading file: {e}\n\n---\n")
     except IOError as e:
-        print(f"Error writing local code summary file {summary_file}: {e}")
+        print(f"Error writing local code summary file {summary_file}: {e}", file=sys.stderr)
+    except Exception as e:
+         print(f"An unexpected error occurred during local code summary creation: {e}", file=sys.stderr)
 
 
-def read_previous_selection():
-    """Reads previously selected file paths from JSON."""
-    hidden_directory = Path(".summary_files")
-    selection_file = hidden_directory / "previous_selection.json"
-    if selection_file.exists():
-        try:
-            with open(selection_file, "r", encoding='utf-8') as f:
-                previous_selection = json.load(f)
-                # Basic validation: ensure it's a list of strings
-                if isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection):
-                     return previous_selection
-                else:
-                     print("Warning: Invalid format in previous_selection.json. Ignoring.")
-                     return []
-        except json.JSONDecodeError:
-            print("Warning: Could not decode previous_selection.json. Ignoring.")
-            return []
-        except IOError as e:
-            print(f"Warning: Could not read previous_selection.json: {e}. Ignoring.")
-            return []
-    else:
-        return [] # No previous selection found
+def create_compressed_summary(
+    selected_files: list[str],
+    client: OpenAI | None,
+    llm_model: str,
+    base_dir: Path = Path('.')
+    ):
+    """Creates a compressed summary markdown file using AI for non-main files."""
+    summary_directory = get_summary_dir(base_dir)
+    compressed_summary_file = summary_directory / COMPRESSED_SUMMARY_FILENAME
+    project_root = base_dir.resolve()
 
-def write_previous_selection(selected_files):
-    """Writes the list of selected file paths to JSON."""
-    hidden_directory = Path(".summary_files")
-    selection_file = hidden_directory / "previous_selection.json"
-    if not hidden_directory.exists():
-        print(f"Warning: Cannot save selection, directory {hidden_directory} not found.")
+    if not summary_directory.exists():
+         print(f"Warning: Summary directory {summary_directory} does not exist. Skipping compressed summary generation.", file=sys.stderr)
+         return # Or create it: create_hidden_directory()
+
+    if not client:
+        print("OpenAI client not available. Cannot generate compressed summary.", file=sys.stderr)
+        # Optionally create a file indicating the error or just skip
         return
+
     try:
-        with open(selection_file, "w", encoding='utf-8') as f:
-            # Ensure selected_files is a list of strings (full paths)
-            if isinstance(selected_files, list) and all(isinstance(item, str) for item in selected_files):
-                json.dump(selected_files, f, indent=4)
-            else:
-                print("Error: Invalid data type for selected_files. Cannot save selection.")
+        gitignore_specs = file_utils.parse_gitignore(project_root)
+        tree_output = file_utils.get_tree_output(project_root, gitignore_specs, file_utils.DEFAULT_IGNORE_LIST)
+
+        # Overwrite existing compressed summary
+        with open(compressed_summary_file, "w", encoding='utf-8') as summary:
+            summary.write(f"Project Root: {project_root}\n")
+            summary.write(f"Project Structure:\n```\n{tree_output}\n```\n\n---\n")
+
+            for file_path_str in selected_files: # Absolute paths
+                file_path_obj = Path(file_path_str)
+                try:
+                    relative_path = file_path_obj.relative_to(project_root)
+                    relative_path_str = relative_path.as_posix()
+                except ValueError:
+                    relative_path = file_path_obj # Fallback
+                    relative_path_str = str(file_path_obj)
+
+
+                # Define metadata path based on relative structure *within* .summary_files
+                metadata_dir_relative = relative_path.parent # Relative path of the dir
+                metadata_directory = summary_directory / metadata_dir_relative
+                metadata_directory.mkdir(parents=True, exist_ok=True)
+                metadata_path = metadata_directory / f"{file_path_obj.name}{METADATA_SUFFIX}"
+
+                file_summary = "" # Initialize summary variable
+
+                # --- AI Summary Generation with Hashing ---
+                try:
+                    with open(file_path_obj, "r", encoding='utf-8') as f:
+                        file_content = f.read()
+                    current_hash = hashlib.md5(file_content.encode("utf-8")).hexdigest()
+                except Exception as e:
+                    print(f"Error reading file {relative_path_str} for hashing: {e}", file=sys.stderr)
+                    summary.write(f"\n## File: {relative_path_str}\n\nError reading file: {e}\n---\n")
+                    continue # Skip this file
+
+                # Check cache
+                use_cached = False
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, "r", encoding='utf-8') as metadata_file:
+                            metadata = json.load(metadata_file)
+                        saved_hash = metadata.get("hash")
+                        if saved_hash == current_hash:
+                            print(f"File '{relative_path_str}' unchanged. Using cached summary.")
+                            file_summary = metadata.get("summary", "Error: Cached summary not found.")
+                            use_cached = True
+                        else:
+                            print(f"File '{relative_path_str}' modified. Generating new summary...")
+                    except json.JSONDecodeError:
+                        print(f"Warning: Corrupted metadata for {relative_path_str}. Regenerating summary.", file=sys.stderr)
+                    except Exception as e:
+                         print(f"Error reading metadata for {relative_path_str}: {e}. Regenerating summary.", file=sys.stderr)
+
+                # Generate summary if not cached or cache invalid/missing
+                if not use_cached:
+                     print(f"Generating summary for {relative_path_str}...")
+                     # Call the utility function
+                     file_summary = openai_utils.generate_summary(client, llm_model, file_content)
+                     # Cache the new summary and hash
+                     metadata = {"hash": current_hash, "summary": file_summary}
+                     try:
+                         with open(metadata_path, "w", encoding='utf-8') as metadata_file:
+                             json.dump(metadata, metadata_file, indent=4)
+                     except Exception as e:
+                         print(f"Error writing metadata for {relative_path_str}: {e}", file=sys.stderr)
+
+
+                # Write summary to the compressed file
+                summary.write(f"\n## File: {relative_path_str}\n\nSummary:\n```markdown\n") # Assume summary is markdownish
+                summary.write(file_summary)
+                summary.write("\n```\n---\n")
+                print(f"Processed summary for: {relative_path_str}")
+                print("-----------------------------------")
+
+
     except IOError as e:
-        print(f"Error writing previous selection file {selection_file}: {e}")
-    except TypeError as e:
-        print(f"Error serializing selection data to JSON: {e}")
+        print(f"Error writing compressed summary file {compressed_summary_file}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"An unexpected error occurred during compressed summary creation: {e}", file=sys.stderr)
 
 
-def main():
-    # args = parse_arguments() # Parse args if needed (e.g., for --infer)
-    create_hidden_directory()
-
-    gitignore_specs = parse_gitignore()
-    # Ensure IGNORE_LIST contains common temporary/generated dirs
-    ignore_list = IGNORE_LIST # Use the global list
-
-    previous_selection = read_previous_selection()
-    print("Loading file selection interface...")
-
-    # Pass directory '.' to start from current dir
-    selected_files = select_files(".", previous_selection, gitignore_specs, ignore_list)
-
-    if not selected_files:
-        print("No files selected. Exiting.")
-        return
-
-    print("\nSelected files:")
-    for f in selected_files:
-        # Display relative path for clarity
-        try:
-             print(f"- {Path(f).relative_to('.')}")
-        except ValueError:
-             print(f"- {f}") # Fallback if not relative to '.'
-
-    # Save the current selection (list of full paths)
-    write_previous_selection(selected_files)
-    print(f"\nSelection saved to '.summary_files/previous_selection.json'.")
-
-    # Create the local code summary (full content)
-    create_code_summary(selected_files)
-    print("Local code summary (full content) created in '.summary_files/code_summary.md'.")
-
-    # Copy code_summary.md contents to clipboard
-    summary_file_path = Path(".summary_files") / "code_summary.md"
+def copy_summary_to_clipboard(base_dir: Path = Path('.')):
+    """Copies the content of the local code_summary.md to the clipboard."""
+    summary_file_path = get_summary_dir(base_dir) / CODE_SUMMARY_FILENAME
     if summary_file_path.exists():
         try:
             with open(summary_file_path, "r", encoding='utf-8') as summary_file:
                 summary_content = summary_file.read()
             pyperclip.copy(summary_content)
             print("Local code summary content has been copied to clipboard.")
+            return True
         except pyperclip.PyperclipException as e:
-            print(f"Could not copy to clipboard: {e}. You can manually copy from {summary_file_path}")
+            print(f"Could not copy to clipboard: {e}. You can manually copy from {summary_file_path}", file=sys.stderr)
         except Exception as e:
-            print(f"Error reading summary file for clipboard: {e}")
+            print(f"Error reading summary file for clipboard: {e}", file=sys.stderr)
     else:
-        print("Local code summary file not found, skipping clipboard copy.")
-
-
-    # --- Optional AI Features ---
-    if client: # Only ask if OpenAI client is available
-        try:
-            # Ask user if they want to generate a compressed summary (using AI)
-            generate_compressed_q = input("\nGenerate AI-powered compressed summary? (y/N): ").strip().lower()
-            if generate_compressed_q == 'y':
-                create_compressed_summary(selected_files) # This now uses AI
-                print("\nAI-powered compressed code summary created in '.summary_files/compressed_code_summary.md'.")
-
-                # Ask user if they want to generate an updated README (only if compressed summary was created)
-                compressed_summary_file = Path(".summary_files") / "compressed_code_summary.md"
-                if compressed_summary_file.exists():
-                    generate_readme_q = input("Generate updated README.md using AI summary? (y/N): ").strip().lower()
-                    if generate_readme_q == 'y':
-                        try:
-                            with open(compressed_summary_file, "r", encoding='utf-8') as f:
-                                compressed_summary_content = f.read()
-
-                            if compressed_summary_content.strip(): # Ensure content exists
-                                readme_content = generate_readme(compressed_summary_content)
-                                readme_file = Path("README.md")
-                                with open(readme_file, "w", encoding='utf-8') as f:
-                                    f.write(readme_content)
-                                print("\nUpdated README.md file generated successfully.")
-                            else:
-                                print("Compressed summary is empty. Skipping README generation.")
-
-                        except FileNotFoundError:
-                            print("Error: Compressed summary file not found. Cannot generate README.")
-                        except Exception as e:
-                            print(f"Error during README generation: {e}")
-                else:
-                    print("Compressed summary file not found. Skipping README generation prompt.")
-
-        except EOFError:
-             print("\nInput interrupted. Exiting AI feature prompts.")
-    else:
-        print("\nOpenAI API key not configured. Skipping AI summary and README generation.")
-
-    print("\nProcess finished.")
-
-
-if __name__ == "__main__":
-    # Check if OPENAI_API_KEY is set before running main potentially
-    # if not os.getenv("OPENAI_API_KEY"):
-    #     print("Warning: OPENAI_API_KEY environment variable is not set.")
-    #     # decide whether to exit or continue without AI features
-    main()
+        print("Local code summary file not found, skipping clipboard copy.", file=sys.stderr)
+    return False
 ```
 ---
-## File: codesum.sh
-
-```sh
-#!/bin/bash
-
-# Function to add alias to the profile if it doesn't exist
-add_alias() {
-    local profile_path=$1
-    local alias_name=$2
-    local script=$3
-
-    # Check if this script is in the profile
-    local alias_command="alias ${alias_name}='${script}'"
-    if ! grep -q "${alias_command}" "${profile_path}"; then
-        echo "${alias_command}" >> "${profile_path}"
-        echo "Alias added. You might need to restart your terminal or run 'source ${profile_path}'"
-    else
-        echo "Alias already exists in your profile"
-    fi
-}
-
-#get the path of the script
-SCRIPT=$(readlink -f "$0")
-SCRIPTPATH=$(dirname "$SCRIPT")
-GRANDPARENTDIR=$(dirname "$(dirname "$SCRIPTPATH")")
-
-echo "$SCRIPT"
-echo "$SCRIPTPATH"
-echo "$GRANDPARENTDIR"
-
-#see if virtual environment exists
-if [ -f "$SCRIPTPATH/venv/bin/activate" ]; then
-    echo "venv exists"
-else
-    echo "venv does not exist"
-    #create virtual environment
-    python3 -m venv "$SCRIPTPATH/venv"
-    #activate virtual environment
-    source "$SCRIPTPATH/venv/bin/activate"
-    #install requirements
-    pip install -r "$SCRIPTPATH/requirements.txt"
-    #deactivate virtual environment
-    deactivate
-fi
-
-# Alias handling
-DECLINE_RECORD=~/.bash_alias_decline
-BASH_PROFILE_PATH=~/.bash_profile
-BASHRC_PATH=~/.bashrc
-
-# Determine which shell profile exists
-if [ -f "$BASH_PROFILE_PATH" ]; then
-    PROFILE_PATH="$BASH_PROFILE_PATH"
-elif [ -f "$BASHRC_PATH" ]; then
-    PROFILE_PATH="$BASHRC_PATH"
-else
-    echo "No .bash_profile or .bashrc detected. Alias will not be added."
-    exit 1
-fi
-
-ALIAS_NAME="codesum"
-ALIAS_EXISTS=$(grep -Fq "alias $ALIAS_NAME=" "$PROFILE_PATH" && echo 'yes' || echo 'no')
-
-# Check if the alias doesn't exist and the user hasn't previously declined
-if [[ "$ALIAS_EXISTS" == "no" && ! -f "$DECLINE_RECORD" ]]; then
-    echo "Alias not found in your profile. Do you want to add it? (yes/no)"
-    read user_input
-    if [[ $user_input == 'yes' ]]; then
-        add_alias "$PROFILE_PATH" "$ALIAS_NAME" "$SCRIPT"
-    elif [[ $user_input == 'no' ]]; then
-        # Record the user's decision to not add the alias
-        touch "$DECLINE_RECORD"
-        echo "Okay, not adding alias. This decision has been remembered."
-    fi
-fi
-
-# Activate the virtual environment
-source "$SCRIPTPATH/venv/bin/activate"
-
-# Run the app
-# python "$SCRIPTPATH/app.py"
-# Run the app with all command-line arguments passed to this script
-python "$SCRIPTPATH/app.py" $@
-
-
-# Deactivate the virtual environment
-deactivate
-
-```
----
-## File: env_example
-
-```
-OPENAI_API_KEY=sk-XXXX
-LLM_MODEL=gpt-4o
-DEEPINFRA_API_KEY=XXXXXX
-DEEPINFRA_MODEL=
-```
----
-## File: requirements.txt
-
-```txt
-openai
-itsprompt
-pathspec
-python-dotenv
-keyboard
-pyperclip
-```
----
-## File: setup.py
+## File: src/codesum/tui.py
 
 ```py
-#!/usr/bin/env python3
-
+import curses
 import os
-import subprocess
 import sys
-import platform
 from pathlib import Path
-import shutil
+import pathspec # For type hint
 
-def is_windows():
-    return platform.system().lower() == "windows"
+# --- Helper Function to Check Terminal Color Support ---
+def check_color_support():
+    """Checks if the terminal likely supports colors."""
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+    try:
+        # Use curses to check color support after initscr
+        # This check is more reliable within the curses context
+        curses.start_color()
+        if curses.has_colors():
+            # Optional: Check for minimum number of colors/pairs if needed
+            # print(f"Colors supported: {curses.COLORS}, Pairs: {curses.COLOR_PAIRS}")
+            return True
+        return False
+    except curses.error:
+        # Error likely means no color support or terminal issue
+        return False
+    # Note: This check inside check_color_support might be problematic
+    # if called *before* curses.wrapper. It's better to check *inside*
+    # the curses-managed function (draw_menu).
 
-def get_script_dir():
-    return Path(__file__).parent.absolute()
+# --- Constants for Curses Colors ---
+COLOR_PAIR_DEFAULT = 0
+COLOR_PAIR_FOLDER = 1
+COLOR_PAIR_STATUS = 2
+COLOR_PAIR_HIGHLIGHT = 3 # For the cursor line background/foreground
 
-def setup_virtualenv_and_run_script(script_dir):
-    venv_activate = script_dir / 'venv' / 'bin' / 'activate'
-    run_command = f'source {venv_activate} && python {script_dir / "app.py"}'
-    return run_command
 
-def get_shell_configuration_path():
-    if is_windows():
-        return Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
-    elif platform.system().lower() == "darwin":
-        return Path.home() / ".zshrc"
-    else:
-        return Path.home() / ".bashrc"
+# --- Main Selection Function ---
+def select_files(
+    directory: Path,
+    previous_selection: list[str],
+    gitignore_specs: pathspec.PathSpec | None,
+    ignore_list: list[str]
+) -> list[str]:
+    """Interactively selects files using curses, hiding folders and coloring paths."""
 
-def create_virtual_environment(script_dir):
-    venv_path = script_dir / "venv"
-    if not venv_path.is_dir():
-        subprocess.run([sys.executable, "-m", "venv", str(venv_path)])
-    return venv_path
+    # Import build_tree and flatten_tree locally to avoid circular dependency potential
+    # OR restructure file_utils slightly if needed. Assume they are importable.
+    from . import file_utils
 
-def activate_virtual_environment(venv_path):
-    if is_windows():
-        activate_script = venv_path / "Scripts" / "activate.bat"
-        os.system(f'cmd /k "{activate_script}"')
-    else:
-        activate_script = venv_path / "bin" / "activate"
-        os.environ["VIRTUAL_ENV"] = str(venv_path)
-        old_path = os.environ["PATH"]
-        os.environ["PATH"] = f"{str(venv_path / 'bin')}{os.pathsep}{old_path}"
-        subprocess.run(["source", str(activate_script)], shell=True)
+    tree = file_utils.build_tree(directory, gitignore_specs, ignore_list)
+    # flatten_tree returns (display_name: str, full_path: str) tuples
+    flattened_files = file_utils.flatten_tree(tree)
 
-def install_dependencies(script_dir, venv_path):
-    requirements_path = script_dir / "requirements.txt"
-    if requirements_path.is_file():
-        subprocess.run(["pip", "install", "-r", str(requirements_path)])
-    else:
-        print("No requirements.txt found.")
+    # Convert previous_selection (absolute paths) to a set for efficient lookup
+    # Ensure paths from previous selection are resolved absolute paths
+    selected_paths = set(str(Path(p).resolve()) for p in previous_selection)
 
-def set_alias(run_command):
-    shell_config_path = get_shell_configuration_path()
-    alias_name = "codesum"
-    alias_command = f'alias {alias_name}="{run_command}"'
-    
-    if shell_config_path.is_file():
-        with open(shell_config_path, "r+") as file:
-            content = file.read()
-            if alias_command not in content:
-                file.write(f"\n# Alias for code_summarize script\n{alias_command}\n")
-                print(f"Alias added to {shell_config_path}. Please restart your shell or run 'source {shell_config_path}' to use it.")
-            else:
-                print("Alias already exists in your shell profile.")
+    # Prepare options for curses: (display_name, full_path)
+    options = [(display, path) for display, path in flattened_files]
 
-def check_and_create_env_file(script_dir):
-    env_file = script_dir / ".env"
-    env_example = script_dir / "env_example"
+    # --- Curses Main Logic (Inner Function) ---
+    def _curses_main(stdscr):
+        nonlocal selected_paths # Allow modification of the set from parent scope
+        curses.curs_set(0)  # Hide cursor
+        current_page = 0
+        current_pos = 0
+        has_color = False # Determined after curses init
 
-    if not env_file.exists():
-        print("No .env file found. Creating one...")
-        if env_example.exists():
-            shutil.copy(env_example, env_file)
-            print("Created .env file from env_example.")
-        else:
-            print("env_example not found. Creating a new .env file.")
-            env_file.touch()
+        # Initialize colors safely
+        try:
+             if curses.has_colors():
+                  has_color = True
+                  curses.use_default_colors() # Try for transparent background
+                  # Define color pairs (adjust colors as desired)
+                  curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, -1)
+                  curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_CYAN, -1)
+                  curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE) # Status bar
+                  curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_CYAN) # Highlight line
+             else:
+                  # Define fallback pairs for monochrome if needed, though A_REVERSE works
+                  curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE)
+                  curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        except curses.error as e:
+             # Color setup failed, proceed without color
+             # print(f"Color setup error: {e}") # Debug
+             has_color = False
 
-        openai_api_key = input("Please enter your OpenAI API key: ")
-        llm_model = input("Enter the LLM model to use (default is gpt-4): ") or "gpt-4"
 
-        with open(env_file, "w") as f:
-            f.write(f"OPENAI_API_KEY={openai_api_key}\n")
-            f.write(f"LLM_MODEL={llm_model}\n")
+        while True:
+            h, w = stdscr.getmaxyx()
+            # Ensure minimum screen size (optional)
+            # if h < 5 or w < 20:
+            #     stdscr.clear()
+            #     stdscr.addstr(0, 0, "Terminal too small!")
+            #     stdscr.refresh()
+            #     key = stdscr.getch()
+            #     if key == ord('q') or key == 27: break # Allow quitting
+            #     continue
 
-        print(".env file created successfully.")
-    else:
-        print(".env file already exists.")
+            page_size = max(1, h - 4) # Rows available for options
 
-def main():
-    script_dir = get_script_dir()
-    
-    venv_path = create_virtual_environment(script_dir)
-    activate_virtual_environment(venv_path)
-    
-    install_dependencies(script_dir, venv_path)
-    
-    check_and_create_env_file(script_dir)
-    
-    run_command = setup_virtualenv_and_run_script(script_dir)
-    set_alias(run_command)
+            items_on_current_page = min(page_size, len(options) - current_page * page_size)
+            max_pos_on_page = items_on_current_page - 1 if items_on_current_page > 0 else 0
 
-if __name__ == "__main__":
-    main()
+            # Adjust current_pos if it's out of bounds due to resize or page change
+            if current_pos > max_pos_on_page:
+                 current_pos = max_pos_on_page
+            if current_pos < 0 : # Ensure current_pos is not negative
+                 current_pos = 0
 
+            # --- Draw Menu ---
+            _draw_menu(stdscr, options, selected_paths, current_page, current_pos, page_size, has_color)
+
+            # --- Get Key ---
+            try:
+                 key = stdscr.getch()
+            except curses.error: # Handle interrupt during getch maybe?
+                 key = -1 # Treat as no key press
+
+            # --- Key Handling ---
+            current_abs_index = current_page * page_size + current_pos
+            total_options = len(options)
+            total_pages = (total_options + page_size - 1) // page_size if page_size > 0 else 1
+
+            if key == ord('q') or key == 27: # Quit
+                # Optionally ask for confirmation? For now, just quit.
+                # We need to return the *original* selection if user quits.
+                # Let's return None to signal cancellation.
+                selected_paths = None # Signal cancellation
+                break
+            elif key == ord(' '): # Toggle selection
+                if 0 <= current_abs_index < total_options:
+                    _, full_path = options[current_abs_index]
+                    resolved_path = str(Path(full_path).resolve()) # Use resolved path for set
+                    if resolved_path in selected_paths:
+                        selected_paths.remove(resolved_path)
+                    else:
+                        selected_paths.add(resolved_path)
+                    # Move down after selection (optional usability enhancement)
+                    if current_pos < max_pos_on_page:
+                         current_pos += 1
+                    elif current_page < total_pages - 1:
+                          current_page += 1
+                          current_pos = 0
+
+            elif key == curses.KEY_UP:
+                if current_pos > 0:
+                    current_pos -= 1
+                elif current_page > 0:
+                    current_page -= 1
+                    # Calc items on new prev page
+                    h_new, w_new = stdscr.getmaxyx()
+                    page_size_new = max(1, h_new - 4)
+                    items_on_prev_page = min(page_size_new, total_options - current_page * page_size_new)
+                    current_pos = items_on_prev_page - 1 if items_on_prev_page > 0 else 0
+
+            elif key == curses.KEY_DOWN:
+                if current_pos < max_pos_on_page:
+                    current_pos += 1
+                elif current_page < total_pages - 1:
+                    current_page += 1
+                    current_pos = 0
+
+            elif key == curses.KEY_LEFT or key == curses.KEY_PPAGE: # Page Up
+                 if current_page > 0:
+                    current_page -= 1
+                    current_pos = 0
+
+            elif key == curses.KEY_RIGHT or key == curses.KEY_NPAGE: # Page Down
+                 if current_page < total_pages - 1:
+                    current_page += 1
+                    current_pos = 0
+
+            elif key == 10 or key == curses.KEY_ENTER:  # Confirm selection
+                break # Exit loop, selected_paths holds the final set
+
+            elif key == curses.KEY_RESIZE: # Handle terminal resize
+                 # Recalculate page size and potentially current_pos
+                 # The loop automatically handles redraw on next iteration
+                 # Ensure current_pos remains valid is handled at top of loop
+                 pass
+
+        # Return the set of selected paths (or None if cancelled)
+        return selected_paths
+
+    # --- Draw Menu Helper (Inner Function) ---
+    def _draw_menu(stdscr, options, selected_paths, current_page, current_pos, page_size, has_color):
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+
+        # Instructions
+        title = "CodeSum File Selection"
+        instructions = "[SPACE] Toggle | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+        try:
+            stdscr.addstr(0, 0, title.ljust(w-1))
+            stdscr.addstr(1, 0, instructions.ljust(w-1))
+            stdscr.addstr(2, 0, "-" * (w - 1))
+        except curses.error: pass # Ignore errors if window too small
+
+        # Calculate display slice
+        start_idx = current_page * page_size
+        end_idx = min(start_idx + page_size, len(options))
+        current_options_page = options[start_idx:end_idx]
+
+        # Display file list
+        for idx, (display_name, full_path) in enumerate(current_options_page):
+            y_pos = idx + 3 # Start below headers
+
+            resolved_path = str(Path(full_path).resolve()) # Use resolved path for checking selection
+            is_selected = resolved_path in selected_paths
+            is_highlighted = idx == current_pos
+
+            # Determine attributes
+            attr = curses.A_NORMAL
+            folder_attr = curses.A_NORMAL
+            file_attr = curses.A_NORMAL
+
+            if has_color:
+                default_pair = curses.color_pair(COLOR_PAIR_DEFAULT)
+                folder_pair = curses.color_pair(COLOR_PAIR_FOLDER)
+                highlight_pair = curses.color_pair(COLOR_PAIR_HIGHLIGHT)
+                attr |= default_pair
+                folder_attr |= folder_pair
+                file_attr |= default_pair
+                if is_highlighted:
+                    # Apply highlight pair to all parts of the line
+                    attr = highlight_pair | curses.A_BOLD # Make highlighted bold
+                    folder_attr = highlight_pair | curses.A_BOLD
+                    file_attr = highlight_pair | curses.A_BOLD
+            elif is_highlighted:
+                 attr = curses.A_REVERSE # Fallback highlight for monochrome
+                 folder_attr = curses.A_REVERSE
+                 file_attr = curses.A_REVERSE
+
+
+            # Render line components
+            checkbox = "[X]" if is_selected else "[ ]"
+            prefix = f"{checkbox} "
+            max_name_width = w - len(prefix) - 1 # Max width for the display name
+
+            # Truncate display name if necessary
+            truncated_name = display_name
+            if len(display_name) > max_name_width:
+                 truncated_name = "..." + display_name[-(max_name_width-3):] # Show end part
+
+            # Draw prefix
+            try:
+                stdscr.addstr(y_pos, 0, prefix, attr)
+            except curses.error: pass
+
+            # Draw name (with potential color split)
+            x_offset = len(prefix)
+            last_slash_idx = truncated_name.rfind('/')
+            try:
+                if has_color and last_slash_idx != -1:
+                    path_part = truncated_name[:last_slash_idx + 1]
+                    file_part = truncated_name[last_slash_idx + 1:]
+                    stdscr.addstr(y_pos, x_offset, path_part, folder_attr)
+                    # Check bounds before drawing file part
+                    if x_offset + len(path_part) < w:
+                         stdscr.addstr(y_pos, x_offset + len(path_part), file_part, file_attr)
+                else:
+                    # No color or no slash, draw whole name with base attr
+                    stdscr.addstr(y_pos, x_offset, truncated_name, attr)
+            except curses.error:
+                # Attempt to draw truncated version if full fails near edge
+                try:
+                     safe_name = truncated_name[:w-x_offset-1]
+                     stdscr.addstr(y_pos, x_offset, safe_name, attr)
+                except curses.error: pass # Final fallback: ignore draw error
+
+        # Status line
+        total_pages = (len(options) + page_size - 1) // page_size if page_size > 0 else 1
+        status = f" Page {current_page + 1}/{total_pages} | Files {start_idx + 1}-{end_idx} of {len(options)} | Selected: {len(selected_paths)} "
+        status_attr = curses.color_pair(COLOR_PAIR_STATUS) if has_color else curses.A_REVERSE
+        try:
+            stdscr.addstr(h - 1, 0, status.ljust(w-1), status_attr)
+        except curses.error: pass # Ignore error drawing status line
+
+        stdscr.refresh()
+
+
+    # --- Run Curses ---
+    final_selected_paths = None # Initialize to None (meaning cancelled or error)
+    try:
+         selected_set = curses.wrapper(_curses_main)
+         if selected_set is not None: # Check if user confirmed (didn't quit)
+             # Convert set of absolute paths back to a sorted list
+             final_selected_paths = sorted(list(selected_set))
+    except curses.error as e:
+         # Clear screen attempts might fail if terminal is in bad state
+         # os.system('cls' if os.name == 'nt' else 'clear') # Try clearing screen post-error
+         print(f"\nTerminal error: {e}", file=sys.stderr)
+         print("There was an issue initializing/running the text interface.", file=sys.stderr)
+         print("This might be due to an incompatible terminal, running in an unsupported environment,", file=sys.stderr)
+         print("or the terminal window being too small.", file=sys.stderr)
+         # Indicate failure by returning None or empty list
+    except Exception as e:
+         print(f"\nAn unexpected error occurred during file selection: {e}", file=sys.stderr)
+         # Indicate failure
+
+    # Return the final selection (list of absolute paths) or None if cancelled/error
+    return final_selected_paths if final_selected_paths is not None else []
 ```
 ---
