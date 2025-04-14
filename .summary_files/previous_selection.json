@@ -1,0 +1,7 @@
+[
+    "./app.py",
+    "./codesum.sh",
+    "./env_example",
+    "./requirements.txt",
+    "./setup.py"
+]
