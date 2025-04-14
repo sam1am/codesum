@@ -1,118 +1,184 @@
-# Code Summarizer for LLM Interaction
+# CodeSum: AI-Powered Code Summarizer with TUI 🐍📄✨
 
-## Project Description 📝
+**Generate concise code summaries optimized for Large Language Models (LLMs) using an interactive Text User Interface (TUI).**
 
-This tool generates concise code summaries optimized for Large Language Models (LLMs). It uses OpenAI's GPT-4 to create project overviews, making it easier for LLMs to understand and work with your codebase. Features include interactive file selection, summary caching, and automatic README generation.
+This tool analyzes your project structure, lets you select relevant files through an interactive TUI, and generates summaries tailored for AI interaction. It can create both a full-content summary (copied to your clipboard) and an AI-powered compressed summary, leveraging models like GPT-4o via the OpenAI API. Features include intelligent summary caching, `.gitignore` respect, and optional AI-driven README generation based on the compressed summary.
 
-## Video Tutorial
+## Video Tutorial (Demonstrates Core Functionality)
 
 [![codesum youtube video](https://img.youtube.com/vi/IY-KIMyUaB8/0.jpg)](https://www.youtube.com/watch?v=IY-KIMyUaB8)
+*(Note: The video might show older setup steps, but the core TUI and summarization process remains similar.)*
 
 ## Key Features 🔑
 
-- Curses-based interactive file selection
-- Intelligent summary caching
-- Respects `.gitignore` rules
-- Generates detailed and compressed summaries
-- Creates AI-generated README.md
-- Command-line argument support
+*   **Interactive TUI:** Uses `curses` for a smooth file selection experience directly in your terminal.
+*   **Smart Selection:** Remembers your previously selected files for the project.
+*   **Respects `.gitignore`:** Automatically excludes files and directories listed in your `.gitignore`.
+*   **Configurable Ignores:** Uses a default list of common ignores (like `.git`, `venv`, `node_modules`) in addition to `.gitignore`.
+*   **Dual Summaries:**
+    *   **Local Summary:** Creates a `code_summary.md` with the full content of selected files and project structure (automatically copied to clipboard).
+    *   **AI Compressed Summary:** (Optional) Generates a `compressed_code_summary.md` using an LLM for concise summaries of each file, ideal for large context windows.
+*   **Intelligent Caching:** AI summaries are cached based on file content hashes, avoiding redundant API calls for unchanged files.
+*   **AI README Generation:** (Optional) Updates or creates a `README.md` in your project root using the AI-generated compressed summary.
+*   **Easy Configuration:** Manage your OpenAI API key and preferred model via a simple command (`codesum --configure`) or during the first run. Configuration is stored securely in your user config directory.
+*   **Cross-Platform:** Works on Linux, macOS, and Windows (includes necessary `windows-curses` dependency).
+*   **PyPI Package:** Easily installable via `pip`.
 
 ## Installation 🛠️
 
-You can set up this project using either the automated setup script or manual installation.
+Requires Python 3.8 or higher.
 
-### Option 1: Automated Setup (Recommended)
+### Option 1: From PyPI (Recommended)
 
-1. Clone the repository
-2. Navigate to the project directory
-3. Run the setup script:
-   ```sh
-   python setup.py
-   ```
-   This script will:
-   - Create a virtual environment
-   - Install dependencies
-   - Set up the .env file
-   - Create an alias for easy usage
+This is the standard and recommended way to install `CodeSum`:
 
-### Option 2: Manual Setup
+```sh
+pip install codesum
+```
 
-1. Clone the repository
-2. Navigate to the project directory
-3. Set up the Python environment:
-   ```sh
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file with your OpenAI API key:
-   ```
-   OPENAI_API_KEY='your-api-key-here'
-   LLM_MODEL='gpt-4'
-   ```
-5. Optionally, run `codesum.sh` for automated setup
+
+This command downloads the package from the Python Package Index (PyPI) and installs it along with its dependencies. The codesum command will then be available in your environment.
+
+Option 2: From Source (for Development or Latest Version)
+
+If you want to install directly from the source code (e.g., for development or to get the absolute latest changes not yet released on PyPI):
+
+Clone the repository:
+
+```sh
+git clone https://github.com/sam1am/codesum.git # Replace with the actual repo URL
+cd codesum
+```
+
+Create and activate a virtual environment (highly recommended):
+
+```sh
+python3 -m venv venv
+source venv/bin/activate # On Windows use `.\venv\Scripts\activate`
+```
+
+Install the package:
+
+For a regular install from source:
+
+```sh
+pip install .
+```
+
+For an editable install (changes in the source code are reflected immediately):
+
+```sh
+pip install -e .
+```
+
+Configuration
+
+CodeSum needs your OpenAI API key to use AI features.
+
+Run the configuration wizard after installation:
+
+```sh
+codesum --configure
+```
+
+This will interactively prompt you for your OpenAI API Key and the desired LLM model (e.g., gpt-4o).
+
+Alternatively, the tool will prompt you for the API key on the first run if it's not already configured.
+
+Configuration is saved in a settings.env file within your user's config directory (e.g., ~/.config/codesum on Linux, ~/Library/Application Support/codesum on macOS, %APPDATA%\codesum\codesum on Windows). You can leave the API key blank if you only want to use the local summary and clipboard features.
 
 ## Usage 🚀
 
-### Python script:
+Navigate to your project's root directory in your terminal.
+
+Run the command:
+
 ```sh
-python app.py [--infer]
+codesum
 ```
 
-### Bash script:
-```sh
-chmod +x codesum.sh
-./codesum.sh [arguments]
-```
+The interactive TUI will launch, allowing you to select files using the arrow keys and spacebar.
 
-### Using the alias (if set up):
-```sh
-codesum [arguments]
-```
+[SPACE] : Toggle selection for the highlighted file.
 
-The `--infer` flag enables OpenAI API calls for summaries and README generation.
+[↑↓] : Navigate up/down.
+
+[←→ / PgUp / PgDn] : Navigate pages.
+
+[ENTER] : Confirm selection and proceed.
+
+[Q / ESC] : Quit without saving changes.
+
+After confirming your selection, the tool will:
+
+Create/update .summary_files/code_summary.md.
+
+Copy the content of code_summary.md to your clipboard.
+
+Save your selection in .summary_files/previous_selection.json.
+
+If an OpenAI API key is configured:
+
+It will ask if you want to generate an AI-powered compressed summary (.summary_files/compressed_code_summary.md).
+
+If the compressed summary is generated, it will ask if you want to generate/update the root README.md file based on it.
 
 ## Output 📂
 
-When run, the script produces the following:
+The tool creates a hidden .summary_files directory in your project root containing:
 
-1. **Local Code Summary**: 
-   - File: `.summary_files/code_summary.md`
-   - Contents: A comprehensive summary of all selected files, including their full content and a tree structure of the project.
-   - The contents of this file will automatically be sent to the system clipboard.
+code_summary.md:
 
-2. **Compressed Code Summary** (optional):
-   - File: `.summary_files/compressed_code_summary.md`
-   - Contents: A condensed version of the code summary, including AI-generated summaries for each file and the project structure.
+Contains the project structure tree and the full concatenated content of all selected files.
 
-3. **Updated README.md** (optional):
-   - File: `README.md` in the project root
-   - Contents: An AI-generated README file based on the compressed code summary, including sections like Project Description, Installation, Usage, and more.
+This content is automatically copied to your clipboard.
 
-4. **Metadata Files**:
-   - Location: `.summary_files/[file_path]_metadata.json` for each summarized file
-   - Contents: JSON files containing the hash of the original file and its generated summary, used for caching purposes.
+compressed_code_summary.md (Optional - requires API key):
 
-5. **Previous Selection File**:
-   - File: `.summary_files/previous_selection.json`
-   - Contents: A JSON file storing the list of previously selected files for future reference.
+Contains the project structure tree and AI-generated summaries for each selected file.
 
-These outputs provide a comprehensive overview of your project, facilitate efficient interaction with LLMs, and streamline future summarization processes.
+previous_selection.json:
 
+Stores the absolute paths of the files you selected in the last run for this project.
+
+[filename]_metadata.json (Optional - in subdirs matching source):
+
+JSON files (one per AI-summarized file) storing the file's content hash and the generated AI summary for caching purposes.
+
+Additionally, if you opt-in:
+
+README.md (Optional - requires API key):
+
+The project's main README file may be created or updated with AI-generated content based on the compressed summary.
+
+And for configuration:
+
+settings.env (Located in user config directory, not project dir):
+
+Stores your OPENAI_API_KEY and LLM_MODEL.
 
 ## Dependencies 📚
 
-- openai
-- itsprompt
-- pathspec
-- python-dotenv
-- keyboard
-- curses (built-in)
+Core dependencies (installed automatically via pip):
 
-## Acknowledgements 🙌
+openai
 
-Thanks to all contributors and library creators.
+pathspec
 
-## License 📜
+python-dotenv
 
-[Apache 2.0](LICENSE)
+pyperclip
+
+platformdirs
+
+windows-curses (on Windows only)
+
+importlib-resources (on Python < 3.9 only)
+
+License 📜
+
+This project is licensed under the MIT License.
+
+Acknowledgements 🙌
+
+Thanks to the creators of the libraries used in this project and to everyone contributing to the open-source community.
