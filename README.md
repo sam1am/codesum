@@ -46,7 +46,7 @@ If you want to install directly from the source code (e.g., for development or t
 Clone the repository:
 
 ```sh
-git clone https://github.com/sam1am/codesum.git # Replace with the actual repo URL
+git clone https://github.com/sam1am/codesum.git
 cd codesum
 ```
 
@@ -175,10 +175,10 @@ windows-curses (on Windows only)
 
 importlib-resources (on Python < 3.9 only)
 
-License 📜
+## License 📜
 
 This project is licensed under the MIT License.
 
-Acknowledgements 🙌
+## Acknowledgements 🙌
 
 Thanks to the creators of the libraries used in this project and to everyone contributing to the open-source community.
