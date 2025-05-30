@@ -93,7 +93,18 @@ def main():
     # 7. Create Local Code Summary (Full Content)
     summary_utils.create_code_summary(selected_files, base_dir)
     local_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.CODE_SUMMARY_FILENAME
-    print(f"Local code summary (full content) created in '{local_summary_path}'.")
+    if local_summary_path.exists():
+        print(f"Local code summary (full content) created in '{local_summary_path}'.")
+        try:
+            with open(local_summary_path, "r", encoding='utf-8') as f:
+                content = f.read()
+            token_count = openai_utils.count_tokens(content)
+            if token_count >= 0: # Check for valid count
+                print(f"Tokens in '{summary_utils.CODE_SUMMARY_FILENAME}': {token_count}")
+        except Exception as e:
+            print(f"Error counting tokens for {local_summary_path}: {e}", file=sys.stderr)
+    else:
+        print(f"Local code summary file not found at '{local_summary_path}'.", file=sys.stderr)
 
     # 8. Copy to Clipboard
     summary_utils.copy_summary_to_clipboard(base_dir)
@@ -107,14 +118,23 @@ def main():
                 print("Generating compressed summary...") # Give feedback
                 summary_utils.create_compressed_summary(selected_files, openai_client, llm_model, base_dir)
                 compressed_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.COMPRESSED_SUMMARY_FILENAME
-                print(f"\nAI-powered compressed code summary created in '{compressed_summary_path}'.")
-
-                # Ask about README generation (only if compressed summary was made)
                 if compressed_summary_path.exists():
+                    print(f"\nAI-powered compressed code summary created in '{compressed_summary_path}'.")
+                    try:
+                        with open(compressed_summary_path, "r", encoding='utf-8') as f:
+                            content = f.read()
+                        token_count = openai_utils.count_tokens(content)
+                        if token_count >= 0: # Check for valid count
+                            print(f"Tokens in '{summary_utils.COMPRESSED_SUMMARY_FILENAME}': {token_count}")
+                    except Exception as e:
+                        print(f"Error counting tokens for {compressed_summary_path}: {e}", file=sys.stderr)
+
+                    # Ask about README generation (only if compressed summary was made and exists)
                     generate_readme_q = input("Generate/Update README.md using AI summary? (y/N): ").strip().lower()
                     if generate_readme_q == 'y':
                         print("Generating README...") # Give feedback
                         try:
+                            # Reload content just in case, though it should be the same
                             with open(compressed_summary_path, "r", encoding='utf-8') as f:
                                 compressed_summary_content = f.read()
 
@@ -128,11 +148,12 @@ def main():
                                 print("Compressed summary is empty. Skipping README generation.", file=sys.stderr)
 
                         except FileNotFoundError:
-                            print(f"Error: Compressed summary file '{compressed_summary_path}' not found.", file=sys.stderr)
+                            print(f"Error: Compressed summary file '{compressed_summary_path}' not found for README generation.", file=sys.stderr)
                         except Exception as e:
                             print(f"Error during README generation: {e}", file=sys.stderr)
-                # else: # No need for this else, compressed summary path existence is checked above
-                #    print("Compressed summary file not found. Skipping README generation prompt.", file=sys.stderr)
+                else:
+                    print(f"AI-powered compressed summary file not found at '{compressed_summary_path}'. Skipping further AI steps.", file=sys.stderr)
+
 
         except EOFError:
              print("\nInput interrupted during AI feature prompts.")

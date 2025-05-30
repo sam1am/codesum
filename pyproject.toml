@@ -28,6 +28,7 @@ dependencies = [
     "python-dotenv",
     "pyperclip",
     "platformdirs >= 4.0.0",
+    "tiktoken", # Added for token counting
     "windows-curses; sys_platform == 'win32'",
     "importlib-resources; python_version < '3.9'", # Backport for older Python
 ]

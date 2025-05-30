@@ -2,6 +2,7 @@ import os
 import sys
 from openai import OpenAI, RateLimitError, APIError, APITimeoutError
 from pathlib import Path
+import tiktoken # Import tiktoken
 
 # Conditional import for importlib.resources
 if sys.version_info < (3, 9):
@@ -97,3 +98,17 @@ def generate_readme(client: OpenAI, model: str, compressed_summary: str) -> str:
     except Exception as e:
         print(f"Error calling OpenAI API for README: {e}", file=sys.stderr)
         return f"# README Generation Error\n\nAn error occurred:\n```\n{e}\n```"
+
+def count_tokens(text: str, encoding_name: str = "o200k_base") -> int:
+    """
+    Counts the number of tokens in a text string using tiktoken.
+    Defaults to "o200k_base" encoding suitable for gpt-4o and other recent models.
+    """
+    try:
+        encoding = tiktoken.get_encoding(encoding_name)
+        num_tokens = len(encoding.encode(text))
+        return num_tokens
+    except Exception as e:
+        print(f"Error using tiktoken to count tokens (encoding: {encoding_name}): {e}", file=sys.stderr)
+        # Fallback or re-raise, for now return 0 or -1 to indicate error
+        return -1 # Or 0, or raise an exception
