@@ -1,51 +1,137 @@
 import os
 from pathlib import Path
 import pathspec
+import sys
 
 # Consider making this configurable or loaded from a file in future
 DEFAULT_IGNORE_LIST = [
     ".git", "venv", ".summary_files", "__pycache__",
     ".vscode", ".idea", "node_modules", "build", "dist",
     "*.pyc", "*.pyo", "*.egg-info", ".DS_Store",
-    ".env" # Also ignore local .env files if any
+    ".env"  # Also ignore local .env files if any
 ]
 
-def parse_gitignore(directory: Path = Path('.')) -> pathspec.PathSpec | None:
-    """Parses .gitignore file in the specified directory."""
-    gitignore_path = directory / ".gitignore"
-    gitignore_specs = None
-    if gitignore_path.exists():
+
+def find_all_gitignore_files(directory: Path) -> list[tuple[Path, Path]]:
+    """
+    Finds all .gitignore files in the directory tree.
+    Returns a list of tuples: (gitignore_file_path, directory_containing_gitignore)
+    """
+    gitignore_files = []
+    base_dir = directory.resolve()
+
+    try:
+        for root, dirs, files in os.walk(base_dir):
+            # Skip .git directories and other ignored directories early
+            dirs[:] = [d for d in dirs if d not in [
+                '.git', '__pycache__', '.summary_files']]
+
+            if '.gitignore' in files:
+                gitignore_path = Path(root) / '.gitignore'
+                parent_dir = Path(root)
+                gitignore_files.append((gitignore_path, parent_dir))
+    except Exception as e:
+        print(
+            f"Warning: Error walking directory tree for .gitignore files: {e}", file=sys.stderr)
+
+    return gitignore_files
+
+
+def parse_all_gitignores(directory: Path = Path('.')) -> pathspec.PathSpec | None:
+    """
+    Parses all .gitignore files in the directory tree and combines their patterns.
+    Each .gitignore file's patterns are adjusted to be relative to the base directory.
+    """
+    base_dir = directory.resolve()
+    gitignore_files = find_all_gitignore_files(base_dir)
+
+    if not gitignore_files:
+        return None
+
+    all_patterns = []
+
+    for gitignore_path, gitignore_parent in gitignore_files:
         try:
             with open(gitignore_path, "r", encoding='utf-8') as f:
-                lines = [line for line in f.read().splitlines() if line.strip() and not line.strip().startswith('#')]
-            if lines:
-                gitignore_specs = pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, lines)
+                lines = [line.strip() for line in f.read().splitlines()
+                         if line.strip() and not line.strip().startswith('#')]
+
+            if not lines:
+                continue
+
+            # Calculate the relative path from base_dir to the directory containing this .gitignore
+            try:
+                relative_to_base = gitignore_parent.relative_to(base_dir)
+                prefix = str(relative_to_base.as_posix()) + \
+                    "/" if relative_to_base != Path('.') else ""
+            except ValueError:
+                # This shouldn't happen if we're walking from base_dir, but just in case
+                print(
+                    f"Warning: .gitignore at {gitignore_path} is outside base directory", file=sys.stderr)
+                continue
+
+            # Adjust patterns to be relative to base_dir
+            for line in lines:
+                if prefix and not line.startswith('/'):
+                    # For patterns that don't start with /, they apply to the directory
+                    # containing the .gitignore and all subdirectories
+                    adjusted_pattern = prefix + line
+                elif line.startswith('/'):
+                    # Patterns starting with / are relative to the directory containing the .gitignore
+                    adjusted_pattern = prefix + line[1:]  # Remove leading /
+                else:
+                    # Root .gitignore or patterns that should apply globally
+                    adjusted_pattern = line
+
+                all_patterns.append(adjusted_pattern)
+
         except IOError as e:
-            print(f"Warning: Could not read .gitignore file: {e}", file=sys.stderr)
+            print(
+                f"Warning: Could not read .gitignore file {gitignore_path}: {e}", file=sys.stderr)
         except Exception as e:
-             print(f"Warning: Error parsing .gitignore patterns: {e}", file=sys.stderr)
-    return gitignore_specs
+            print(
+                f"Warning: Error parsing .gitignore file {gitignore_path}: {e}", file=sys.stderr)
+
+    if all_patterns:
+        try:
+            return pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, all_patterns)
+        except Exception as e:
+            print(
+                f"Warning: Error creating pathspec from combined .gitignore patterns: {e}", file=sys.stderr)
+            return None
+
+    return None
+
+
+def parse_gitignore(directory: Path = Path('.')) -> pathspec.PathSpec | None:
+    """
+    Legacy function name - now parses all .gitignore files in the directory tree.
+    Kept for backward compatibility.
+    """
+    return parse_all_gitignores(directory)
+
 
 def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignore_list: list[str]):
     """Builds a nested dictionary representing the directory structure, respecting ignores."""
     tree = {}
-    base_dir_path = Path(directory).resolve() # Use resolved absolute path for reliable comparison
+    # Use resolved absolute path for reliable comparison
+    base_dir_path = Path(directory).resolve()
 
-    for item_path in base_dir_path.rglob('*'): # Use rglob for recursive walk
+    for item_path in base_dir_path.rglob('*'):  # Use rglob for recursive walk
         try:
             # Get path relative to the starting directory
             relative_path = item_path.relative_to(base_dir_path)
-            relative_path_str = str(relative_path.as_posix()) # Use posix for consistent matching
+            # Use posix for consistent matching
+            relative_path_str = str(relative_path.as_posix())
 
             # 1. Check explicit ignore_list (faster check)
             if any(part in ignore_list for part in relative_path.parts):
                 continue
             # Check if any parent dir is in ignore list (e.g. ignoring 'node_modules' should ignore everything inside)
             if any(ignore_item in parent.name for parent in relative_path.parents for ignore_item in ignore_list if parent != Path('.')):
-                 continue
+                continue
 
-
-            # 2. Check .gitignore
+            # 2. Check combined .gitignore patterns
             # Use as_posix() for pathspec matching, add trailing slash for dirs
             check_path = relative_path_str + '/' if item_path.is_dir() else relative_path_str
             if gitignore_specs and gitignore_specs.match_file(check_path):
@@ -56,21 +142,22 @@ def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignor
             parts = relative_path.parts
 
             for i, part in enumerate(parts):
-                if i == len(parts) - 1: # Last part (file or dir name)
+                if i == len(parts) - 1:  # Last part (file or dir name)
                     if item_path.is_file():
                         # Store full absolute path as value for files
                         current_level[part] = str(item_path)
                     elif item_path.is_dir():
-                         # Ensure directory entry exists, could be empty
-                         current_level = current_level.setdefault(part, {})
-                else: # Intermediate directory part
+                        # Ensure directory entry exists, could be empty
+                        current_level = current_level.setdefault(part, {})
+                else:  # Intermediate directory part
                     current_level = current_level.setdefault(part, {})
 
         except PermissionError:
             # print(f"Warning: Permission denied accessing {item_path}", file=sys.stderr)
-            continue # Skip files/dirs we can't access
+            continue  # Skip files/dirs we can't access
         except Exception as e:
-            print(f"Warning: Error processing path {item_path}: {e}", file=sys.stderr)
+            print(
+                f"Warning: Error processing path {item_path}: {e}", file=sys.stderr)
             continue
 
     return tree
@@ -92,7 +179,7 @@ def flatten_tree(tree, prefix=''):
     # Add sorted files
     for key, full_path in sorted(files_at_level.items()):
         display_name = f"{prefix}{key}"
-        items.append((display_name, full_path)) # (display name, full path)
+        items.append((display_name, full_path))  # (display name, full path)
 
     # Then recurse into sorted subdirectories
     for key, sub_tree in sorted(dirs_at_level.items()):
@@ -101,53 +188,16 @@ def flatten_tree(tree, prefix=''):
 
     return items
 
+
 def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathSpec | None = None, ignore_list: list[str] = DEFAULT_IGNORE_LIST) -> str:
-    """Generates a string representation of the directory tree, respecting ignores."""
-    output = ".\n"
-    # We use os.walk here as it's often more efficient for simple listing
-    # Need to re-implement the ignore logic within the walk loop
-
-    start_dir = str(directory.resolve())
-
-    for root, dirs, files in os.walk(start_dir, topdown=True):
-        current_dir_path = Path(root)
-        relative_dir_path = current_dir_path.relative_to(start_dir)
-        level = len(relative_dir_path.parts)
-        indent = ' ' * (4 * level)
-
-        # Filter dirs based on ignore_list and gitignore BEFORE adding parent to output
-        original_dirs = list(dirs) # Copy before modifying dirs[:]
-        dirs[:] = [d for d in original_dirs if
-                   d not in ignore_list and
-                   not any(part in ignore_list for part in (relative_dir_path / d).parts) and
-                   not (gitignore_specs and gitignore_specs.match_file(str((relative_dir_path / d).as_posix()) + '/'))
-                  ]
-
-        # Filter files based on ignore_list and gitignore
-        filtered_files = [f for f in files if
-                          f not in ignore_list and
-                           not any(part in ignore_list for part in (relative_dir_path / f).parts) and
-                          not (gitignore_specs and gitignore_specs.match_file(str((relative_dir_path / f).as_posix())))
-                         ]
-
-        # Combine and sort entries for the current level
-        entries = sorted(dirs + filtered_files)
-
-        for entry in entries:
-             output += f"{indent}|-- {entry}\n"
-
-        # Important: Stop os.walk from descending into ignored directories earlier
-        # We already modified dirs[:] above based on ignores, so os.walk won't enter them
-
-
-    # Cleanup duplicate root entry if os.walk adds it weirdly
-    # This simple loop approach might be cleaner:
+    """Generates a string representation of the directory tree, respecting all .gitignore files."""
     output_lines = [".\n"]
+
     def walk_recursive(current_path: Path, level: int):
         try:
             entries = sorted(os.listdir(current_path))
         except OSError:
-            return # Cannot list dir
+            return  # Cannot list dir
 
         indent = ' ' * (4 * level)
         for entry in entries:
@@ -159,7 +209,7 @@ def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathS
             if any(part in ignore_list for part in relative_entry_path.parts):
                 continue
 
-            # Check gitignore
+            # Check combined gitignore patterns
             check_path = relative_entry_str + '/' if entry_path.is_dir() else relative_entry_str
             if gitignore_specs and gitignore_specs.match_file(check_path):
                 continue
