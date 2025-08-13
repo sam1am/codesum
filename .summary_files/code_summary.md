@@ -1,4 +1,4 @@
-Project Root: /Users/johngarfield/Documents/GitHub/codesum
+Project Root: C:\Users\gthin\Github\codesum
 Project Structure:
 ```
 .
@@ -6,6 +6,7 @@ Project Structure:
 |-- LICENSE
 |-- README.md
 |-- pyproject.toml
+|-- release.sh
 |-- src
     |-- codesum
         |-- __init__.py
@@ -21,56 +22,6 @@ Project Structure:
 
 ```
 
----
-## File: pyproject.toml
-
-```toml
-# pyproject.toml
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "codesum"
-version = "0.1.3" # Incremented version
-authors = [
-  { name="Sam G" },
-]
-description = "Interactive code summarizer using AI and TUI"
-readme = "README.md"
-requires-python = ">=3.8"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-    "Environment :: Console :: Curses",
-    "Topic :: Software Development :: Documentation",
-    "Topic :: Utilities",
-]
-keywords = ["code", "summary", "ai", "openai", "tui", "curses", "documentation"]
-
-dependencies = [
-    "openai",
-    "pathspec",
-    "python-dotenv",
-    "pyperclip",
-    "platformdirs >= 4.0.0",
-    "tiktoken", # Added for token counting
-    "windows-curses; sys_platform == 'win32'",
-    "importlib-resources; python_version < '3.9'", # Backport for older Python
-]
-
-[project.scripts]
-codesum = "codesum.app:main"
-
-# --- Add these sections for package data ---`
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-codesum = ["prompts/*.md"]
-# --------------------------------------------
-```
 ---
 ## File: src/codesum/app.py
 
@@ -802,18 +753,6 @@ def count_tokens(text: str, encoding_name: str = "o200k_base") -> int:
         return -1 # Or 0, or raise an exception
 ```
 ---
-## File: src/codesum/prompts/system_readme.md
-
-```md
-You are a code documenter. Your task is to create an updated README.md file for a project using the compressed code summary provided. Make it look nice, use emoji, and include the following sections: Project Description, Installation, and Usage. You can also include a section for Acknowledgements and a section for License.
-```
----
-## File: src/codesum/prompts/system_summary.md
-
-```md
-You are a code documenter. Your purpose is to provide useful summaries for inclusion as reference for future prompts. Provide a concise summary of the given code and any notes that will be useful for other ChatBots to understand how it works. Include specific documentation about each function, class, and relevant parameters.
-```
----
 ## File: src/codesum/summary_utils.py
 
 ```py
@@ -1370,4 +1309,76 @@ def select_files(
     # Return the final selection (list of absolute paths) or None if cancelled/error
     return final_selected_paths if final_selected_paths is not None else []
 ```
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/pyproject.toml
+
+```toml
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\pyproject.toml
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/app.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\app.py
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/config.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\config.py
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/file_utils.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\file_utils.py
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/openai_utils.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\openai_utils.py
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/prompts/system_readme.md
+
+```md
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\prompts\system_readme.md
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/prompts/system_summary.md
+
+```md
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\prompts\system_summary.md
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\summary_utils.py
+
+Error: File not found.
+
+---
+## File: C:/Users/johngarfield/Documents/GitHub/codesum/src/codesum/tui.py
+
+```py
+## File: C:\Users\johngarfield\Documents\GitHub\codesum\src\codesum\tui.py
+
+Error: File not found.
+
 ---

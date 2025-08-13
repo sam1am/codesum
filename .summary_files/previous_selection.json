@@ -1,11 +1,17 @@
 [
-    "/Users/johngarfield/Documents/GitHub/codesum/pyproject.toml",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/app.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/config.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/file_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/openai_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/prompts/system_readme.md",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/prompts/system_summary.md",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/tui.py"
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\app.py",
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\config.py",
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\file_utils.py",
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\openai_utils.py",
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\summary_utils.py",
+    "C:\\Users\\gthin\\Github\\codesum\\src\\codesum\\tui.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\pyproject.toml",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\app.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\config.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\file_utils.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\openai_utils.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\prompts\\system_readme.md",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\prompts\\system_summary.md",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\summary_utils.py",
+    "C:\\Users\\johngarfield\\Documents\\GitHub\\codesum\\src\\codesum\\tui.py"
 ]

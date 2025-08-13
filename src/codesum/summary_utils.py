@@ -30,8 +30,10 @@ def create_hidden_directory(base_dir: Path = Path('.')):
         # Decide if this is fatal or not, maybe return False?
         # For now, just print error and continue
 
+
 def read_previous_selection(base_dir: Path = Path('.')) -> list[str]:
-    """Reads previously selected file paths from JSON in the summary dir."""
+    """Reads previously selected file paths from JSON in the summary dir.
+    Automatically removes files that no longer exist and updates the stored selection."""
     selection_file = get_summary_dir(base_dir) / SELECTION_FILENAME
     if selection_file.exists():
         try:
@@ -39,16 +41,44 @@ def read_previous_selection(base_dir: Path = Path('.')) -> list[str]:
                 previous_selection = json.load(f)
             # Basic validation: ensure it's a list of strings (absolute paths)
             if isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection):
-                 # Convert to absolute paths if they aren't already, though they should be stored as such
-                 return [str(Path(p).resolve()) for p in previous_selection]
+                # Convert to absolute paths if they aren't already, though they should be stored as such
+                abs_paths = [str(Path(p).resolve())
+                             for p in previous_selection]
+
+                # Filter out files that no longer exist
+                existing_paths = []
+                removed_count = 0
+                for path in abs_paths:
+                    if Path(path).exists():
+                        existing_paths.append(path)
+                    else:
+                        removed_count += 1
+                        print(
+                            f"Warning: Previously selected file no longer exists and will be removed: {path}", file=sys.stderr)
+
+                # If any files were removed, update the stored selection
+                if removed_count > 0:
+                    print(
+                        f"Removed {removed_count} non-existent file(s) from previous selection.", file=sys.stderr)
+                    try:
+                        # Write back the cleaned selection
+                        write_previous_selection(existing_paths, base_dir)
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not update previous selection file after cleanup: {e}", file=sys.stderr)
+
+                return existing_paths
             else:
-                 print(f"Warning: Invalid format in {selection_file}. Ignoring.", file=sys.stderr)
-                 return []
+                print(
+                    f"Warning: Invalid format in {selection_file}. Ignoring.", file=sys.stderr)
+                return []
         except json.JSONDecodeError:
-            print(f"Warning: Could not decode {selection_file}. Ignoring.", file=sys.stderr)
+            print(
+                f"Warning: Could not decode {selection_file}. Ignoring.", file=sys.stderr)
             return []
         except IOError as e:
-            print(f"Warning: Could not read {selection_file}: {e}. Ignoring.", file=sys.stderr)
+            print(
+                f"Warning: Could not read {selection_file}: {e}. Ignoring.", file=sys.stderr)
             return []
     else:
         return []
