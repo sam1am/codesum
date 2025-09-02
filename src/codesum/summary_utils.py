@@ -11,6 +11,7 @@ from . import openai_utils
 from . import file_utils
 
 SUMMARY_DIR_NAME = ".summary_files"
+CUSTOM_IGNORE_FILENAME = "codesum_ignore.txt"
 CODE_SUMMARY_FILENAME = "code_summary.md"
 COMPRESSED_SUMMARY_FILENAME = "compressed_code_summary.md"
 SELECTION_FILENAME = "previous_selection.json"
@@ -21,10 +22,21 @@ def get_summary_dir(base_dir: Path = Path('.')) -> Path:
     return base_dir.resolve() / SUMMARY_DIR_NAME
 
 def create_hidden_directory(base_dir: Path = Path('.')):
-    """Creates the hidden summary directory if it doesn't exist."""
+    """Creates the hidden summary directory if it doesn't exist and creates a custom ignore file."""
     hidden_directory = get_summary_dir(base_dir)
     try:
         hidden_directory.mkdir(exist_ok=True)
+        
+        # Create custom ignore file if it doesn't exist
+        custom_ignore_file = hidden_directory / CUSTOM_IGNORE_FILENAME
+        if not custom_ignore_file.exists():
+            with open(custom_ignore_file, "w", encoding='utf-8') as f:
+                f.write("# Add custom ignore patterns here, one per line\n")
+                f.write("# These patterns will be added to the default ignores and .gitignore patterns\n")
+                f.write("# Example:\n")
+                f.write("# *.log\n")
+                f.write("# temp/\n")
+                f.write("# secret.txt\n")
     except OSError as e:
         print(f"Error creating directory {hidden_directory}: {e}", file=sys.stderr)
         # Decide if this is fatal or not, maybe return False?

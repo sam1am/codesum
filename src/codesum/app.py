@@ -57,6 +57,17 @@ def main():
     summary_utils.create_hidden_directory(base_dir)
     gitignore_specs = file_utils.parse_gitignore(base_dir)
     ignore_list = file_utils.DEFAULT_IGNORE_LIST # Use default ignore list
+    
+    # Add custom ignore patterns from .summary_files/custom_ignore.txt if it exists
+    custom_ignore_file = summary_utils.get_summary_dir(base_dir) / summary_utils.CUSTOM_IGNORE_FILENAME
+    if custom_ignore_file.exists():
+        try:
+            with open(custom_ignore_file, "r", encoding='utf-8') as f:
+                custom_ignores = [line.strip() for line in f.read().splitlines() 
+                                if line.strip() and not line.strip().startswith('#')]
+                ignore_list.extend(custom_ignores)
+        except Exception as e:
+            print(f"Warning: Could not read custom ignore file {custom_ignore_file}: {e}", file=sys.stderr)
 
     # 4. Load Previous Selection
     previous_selection = summary_utils.read_previous_selection(base_dir) # Expects/returns absolute paths

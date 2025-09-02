@@ -1,0 +1,6 @@
+# Add custom ignore patterns here, one per line
+# These patterns will be added to the default ignores and .gitignore patterns
+# Example:
+# *.log
+# temp/
+# secret.txt
