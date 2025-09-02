@@ -128,6 +128,15 @@ def select_files(
                 # Let's return None to signal cancellation.
                 selected_paths = None # Signal cancellation
                 break
+            elif key == ord('a') or key == ord('A'):  # Select/Deselect all
+                # Get all paths from options
+                all_paths = set(str(Path(full_path).resolve()) for _, full_path in options)
+                # If all files are already selected, deselect all
+                if selected_paths == all_paths:
+                    selected_paths.clear()
+                else:
+                    # Otherwise, select all
+                    selected_paths.update(all_paths)
             elif key == ord(' '): # Toggle selection
                 if 0 <= current_abs_index < total_options:
                     _, full_path = options[current_abs_index]
@@ -190,7 +199,7 @@ def select_files(
 
         # Instructions
         title = "CodeSum File Selection"
-        instructions = "[SPACE] Toggle | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+        instructions = "[SPACE] Toggle | [A] Select/Deselect All | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
         try:
             stdscr.addstr(0, 0, title.ljust(w-1))
             stdscr.addstr(1, 0, instructions.ljust(w-1))
