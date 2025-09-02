@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import pathspec
 import sys
+import mimetypes
 
 # Consider making this configurable or loaded from a file in future
 DEFAULT_IGNORE_LIST = [
@@ -10,6 +11,47 @@ DEFAULT_IGNORE_LIST = [
     "*.pyc", "*.pyo", "*.egg-info", ".DS_Store",
     ".env"  # Also ignore local .env files if any
 ]
+
+
+def is_text_file(file_path: Path) -> bool:
+    """
+    Determine if a file is a text file based on its MIME type or by reading a small portion.
+    
+    Args:
+        file_path: Path to the file to check
+        
+    Returns:
+        bool: True if the file is likely a text file, False otherwise
+    """
+    # First check the MIME type
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if mime_type:
+        # Text files typically have MIME types starting with 'text/'
+        if mime_type.startswith('text/'):
+            return True
+        # Explicitly exclude common binary types
+        if mime_type.startswith(('image/', 'audio/', 'video/')) or mime_type in [
+            'application/octet-stream', 'application/pdf', 'application/zip',
+            'application/x-tar', 'application/gzip', 'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ]:
+            return False
+    
+    # If MIME type is not helpful, try to read a small portion of the file
+    try:
+        # Try to read the first 1024 bytes
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+        
+        # Check if the chunk contains null bytes (common in binary files)
+        if b'\x00' in chunk:
+            return False
+            
+        # Try to decode as UTF-8
+        chunk.decode('utf-8')
+        return True
+    except (UnicodeDecodeError, IOError):
+        return False
 
 
 def find_all_gitignore_files(directory: Path) -> list[tuple[Path, Path]]:
@@ -137,6 +179,10 @@ def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignor
             if gitignore_specs and gitignore_specs.match_file(check_path):
                 continue
 
+            # 3. For files, check if they are text files
+            if item_path.is_file() and not is_text_file(item_path):
+                continue
+
             # If not ignored, add to tree
             current_level = tree
             parts = relative_path.parts
@@ -212,6 +258,10 @@ def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathS
             # Check combined gitignore patterns
             check_path = relative_entry_str + '/' if entry_path.is_dir() else relative_entry_str
             if gitignore_specs and gitignore_specs.match_file(check_path):
+                continue
+
+            # For files, check if they are text files
+            if entry_path.is_file() and not is_text_file(entry_path):
                 continue
 
             # If not ignored, add to output and recurse if dir
