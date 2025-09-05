@@ -12,6 +12,7 @@ from . import file_utils
 from . import tui
 from . import summary_utils
 from . import openai_utils
+from . import mcp_http_server
 
 def main():
     """Main application entry point."""
@@ -25,6 +26,22 @@ def main():
         action="store_true",
         help="Run the interactive configuration wizard for API key and model, then exit."
     )
+    parser.add_argument(
+        "--mcp-server",
+        action="store_true",
+        help="Run the MCP server instead of the interactive application."
+    )
+    parser.add_argument(
+        "--mcp-host",
+        default="localhost",
+        help="Host for the MCP server (default: localhost)"
+    )
+    parser.add_argument(
+        "--mcp-port",
+        type=int,
+        default=8000,
+        help="Port for the MCP server (default: 8000)"
+    )
     # Add other arguments here if needed in the future (e.g., --non-interactive, --output-dir)
     args = parser.parse_args()
 
@@ -32,6 +49,11 @@ def main():
     if args.configure:
         config.configure_settings_interactive()
         sys.exit(0) # Exit after configuration
+
+    # --- Handle MCP Server Mode ---
+    if args.mcp_server:
+        mcp_http_server.run_mcp_server(args.mcp_host, args.mcp_port)
+        sys.exit(0)
 
     # --- Normal Operation ---
     base_dir = Path('.').resolve() # Use current working directory as base

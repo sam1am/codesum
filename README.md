@@ -4,6 +4,10 @@
 
 This tool analyzes your project structure, lets you select relevant files through an interactive TUI, and generates summaries tailored for AI interaction. It can create both a full-content summary (copied to your clipboard) and an AI-powered compressed summary, leveraging models like GPT-4o via the OpenAI API. Features include intelligent summary caching, `.gitignore` respect, and optional AI-driven README generation based on the compressed summary.
 
+## Model Context Protocol (MCP) Server 🌐
+
+CodeSum now includes an MCP (Model Context Protocol) server that allows other AI tools to interact with your codebase programmatically. The MCP server can intelligently select relevant files based on a query and return structured summaries that can be used as context for LLM interactions.
+
 ## Video Tutorial (Demonstrates Core Functionality)
 
 [![codesum youtube video](https://img.youtube.com/vi/IY-KIMyUaB8/0.jpg)](https://www.youtube.com/watch?v=IY-KIMyUaB8)
@@ -122,6 +126,32 @@ If an OpenAI API key is configured:
 It will ask if you want to generate an AI-powered compressed summary (.summary_files/compressed_code_summary.md).
 
 If the compressed summary is generated, it will ask if you want to generate/update the root README.md file based on it.
+
+## MCP Server Usage 🌐
+
+CodeSum includes an MCP (Model Context Protocol) server that can be used by other AI tools to interact with your codebase programmatically.
+
+To start the MCP server:
+
+```sh
+codesum --mcp-server
+```
+
+By default, the server will run on `localhost:8000`. You can specify a different host and port:
+
+```sh
+codesum --mcp-server --mcp-host 0.0.0.0 --mcp-port 8001
+```
+
+The MCP server provides the following endpoints:
+
+- `GET /health` - Health check endpoint
+- `GET /summarize?query=<query>&max_files=<N>` - Generate summary with query parameters
+- `POST /summarize` - Generate summary with JSON body
+
+See [MCP_USAGE.md](MCP_USAGE.md) for detailed API documentation and usage examples.
+
+## Output 📂
 
 ## Output 📂
 
