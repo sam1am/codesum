@@ -15,43 +15,76 @@ DEFAULT_IGNORE_LIST = [
 
 def is_text_file(file_path: Path) -> bool:
     """
-    Determine if a file is a text file based on its MIME type or by reading a small portion.
-    
-    Args:
-        file_path: Path to the file to check
-        
-    Returns:
-        bool: True if the file is likely a text file, False otherwise
+    Determine if a file is a text file by analyzing content first, with smart fallbacks.
     """
-    # First check the MIME type
-    mime_type, _ = mimetypes.guess_type(str(file_path))
-    if mime_type:
-        # Text files typically have MIME types starting with 'text/'
-        if mime_type.startswith('text/'):
-            return True
-        # Explicitly exclude common binary types
-        if mime_type.startswith(('image/', 'audio/', 'video/')) or mime_type in [
-            'application/octet-stream', 'application/pdf', 'application/zip',
-            'application/x-tar', 'application/gzip', 'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        ]:
-            return False
-    
-    # If MIME type is not helpful, try to read a small portion of the file
+    # Quick wins: definitely text extensions (minimal list)
+    definitely_text = {'.txt', '.md', '.json',
+                       '.xml', '.csv', '.log', '.ini', '.cfg'}
+    if file_path.suffix.lower() in definitely_text:
+        return True
+
+    # Quick losses: definitely binary extensions
+    definitely_binary = {
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg', '.webp',
+        '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv',
+        '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma',
+        '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar',
+        '.exe', '.dll', '.so', '.dylib', '.app',
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'
+    }
+    if file_path.suffix.lower() in definitely_binary:
+        return False
+
+    # For everything else (including .ts files), analyze the content
+    return _analyze_file_content(file_path)
+
+
+def _analyze_file_content(file_path: Path, sample_size: int = 8192) -> bool:
+    """
+    Analyze file content to determine if it's likely a text file.
+    """
     try:
-        # Try to read the first 1024 bytes
         with open(file_path, 'rb') as f:
-            chunk = f.read(1024)
-        
-        # Check if the chunk contains null bytes (common in binary files)
+            chunk = f.read(sample_size)
+
+        if not chunk:  # Empty file
+            return True
+
+        # Check for null bytes (strong indicator of binary)
         if b'\x00' in chunk:
             return False
-            
+
+        # Check for too many control characters (except common ones like \t, \n, \r)
+        control_chars = sum(1 for byte in chunk if byte <
+                            32 and byte not in (9, 10, 13))
+        if control_chars > len(chunk) * 0.1:  # More than 10% control chars
+            return False
+
         # Try to decode as UTF-8
-        chunk.decode('utf-8')
-        return True
-    except (UnicodeDecodeError, IOError):
-        return False
+        try:
+            text = chunk.decode('utf-8')
+
+            # Additional heuristics for text files:
+            # Check for reasonable printable character ratio
+            printable_chars = sum(
+                1 for char in text if char.isprintable() or char.isspace())
+            printable_ratio = printable_chars / len(text) if text else 1
+
+            return printable_ratio > 0.7  # At least 70% printable characters
+
+        except UnicodeDecodeError:
+            # Try other common encodings
+            for encoding in ['latin-1', 'ascii', 'utf-16']:
+                try:
+                    chunk.decode(encoding)
+                    return True  # Successfully decoded with some encoding
+                except UnicodeDecodeError:
+                    continue
+
+            return False  # Couldn't decode with any common encoding
+
+    except (IOError, OSError):
+        return False  # Can't read file, assume binary
 
 
 def find_all_gitignore_files(directory: Path) -> list[tuple[Path, Path]]:
