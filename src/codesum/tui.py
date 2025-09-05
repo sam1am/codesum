@@ -7,6 +7,63 @@ import pathspec # For type hint
 # Import our new folder_utils
 from . import folder_utils
 
+# --- Helper Functions ---
+def _is_single_file_at_root(tree: dict) -> bool:
+    """
+    Check if there's only one file at the root level with no subdirectories.
+    This is used to determine if we should skip folder display.
+    """
+    file_count = 0
+    dir_count = 0
+    
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            # This is a directory
+            dir_count += 1
+            # Check if this directory has any contents
+            if _count_files_in_tree(value) > 0 or len(value) > 0:
+                # If there are subdirectories or files, it's not a simple case
+                return False
+        else:
+            # This is a file
+            file_count += 1
+    
+    # Return True only if there's exactly one file and no directories
+    return file_count == 1 and dir_count == 0
+
+def _count_files_in_tree(tree: dict) -> int:
+    """Count the total number of files in a tree structure."""
+    count = 0
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            # This is a directory, recurse into it
+            count += _count_files_in_tree(value)
+        else:
+            # This is a file
+            count += 1
+    return count
+
+def _flatten_single_file_tree(tree: dict) -> list[tuple]:
+    """
+    Flatten a tree structure when there's only one file.
+    Returns a list with a single tuple: (filename, path, is_folder, full_path)
+    """
+    def _find_single_file(tree: dict, prefix: str = '') -> tuple:
+        """Find the single file in the tree and return its info."""
+        for key, value in tree.items():
+            if isinstance(value, dict):
+                # This is a directory, recurse into it
+                result = _find_single_file(value, f"{prefix}{key}/")
+                if result:
+                    return result
+            else:
+                # This is the single file
+                return (key, prefix + key, False, value)  # (display_name, path, is_folder, full_path)
+        return None
+    
+    single_file = _find_single_file(tree)
+    return [single_file] if single_file else []
+
 # --- Helper Function to Check Terminal Color Support ---
 def check_color_support():
     """Checks if the terminal likely supports colors."""
@@ -52,6 +109,7 @@ def select_files(
     from . import summary_utils
 
     tree = file_utils.build_tree_with_folders(directory, gitignore_specs, ignore_list)
+    
     # Track folder states: expanded/collapsed and paths
     collapsed_folders = set()  # Set of folder paths that are collapsed
     folder_paths = {}  # Map of folder display paths to actual paths
@@ -163,11 +221,15 @@ def select_files(
                 if selected_paths == all_file_paths:
                     selected_paths.clear()
                 else:
-                    # Otherwise, select all
-                    selected_paths.update(all_file_paths)
+                    # Otherwise, select all (only applicable when not in single file mode)
+                    if not single_file_mode:
+                        selected_paths.update(all_file_paths)
+                    # In single file mode, just select the one file
+                    elif all_file_paths:
+                        selected_paths.update(all_file_paths)
             elif key == ord(' '): # Toggle selection
                 if 0 <= current_abs_index < total_options:
-                    _, path, is_folder, full_path = options[current_abs_index]
+                    display_name, path, is_folder, full_path = options[current_abs_index]
                     if is_folder:
                         # Toggle folder collapse
                         if path in collapsed_folders:
@@ -193,7 +255,7 @@ def select_files(
 
             elif key == ord('f') or key == ord('F'):  # Toggle folder selection
                 if 0 <= current_abs_index < total_options:
-                    _, path, is_folder, full_path = options[current_abs_index]
+                    display_name, path, is_folder, full_path = options[current_abs_index]
                     if is_folder:
                         # Get all files in this folder
                         folder_files = folder_utils.collect_files_in_folder(path, tree_ref)
@@ -363,16 +425,6 @@ def select_files(
                      safe_name = truncated_name[:w-x_offset-1]
                      stdscr.addstr(y_pos, x_offset, safe_name, attr)
                 except curses.error: pass # Final fallback: ignore draw error
-
-        # Status line
-        total_pages = (len(options) + page_size - 1) // page_size if page_size > 0 else 1
-        status = f" Page {current_page + 1}/{total_pages} | Items {start_idx + 1}-{end_idx} of {len(options)} | Selected: {len(selected_paths)} "
-        status_attr = curses.color_pair(COLOR_PAIR_STATUS) if has_color else curses.A_REVERSE
-        try:
-            stdscr.addstr(h - 1, 0, status.ljust(w-1), status_attr)
-        except curses.error: pass # Ignore error drawing status line
-
-        stdscr.refresh()
 
 
     # --- Run Curses ---

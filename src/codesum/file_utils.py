@@ -403,6 +403,7 @@ def flatten_tree_with_folders(tree, prefix='', folder_paths=None, expanded_folde
 def flatten_tree_with_folders_collapsed(tree, prefix='', folder_paths=None, collapsed_folders=None):
     """
     Flattens the tree for display, including folders, with collapsed state tracking.
+    For folders that contain only one file, skips the folder and shows only the file.
     Returns list of tuples: (display_name, path, is_folder, full_path_if_file)
     """
     if folder_paths is None:
@@ -429,17 +430,47 @@ def flatten_tree_with_folders_collapsed(tree, prefix='', folder_paths=None, coll
     # Add sorted folders
     for key, sub_tree in sorted(dirs_at_level.items()):
         folder_path = f"{prefix}{key}"
-        display_name = f"{prefix}{key}/"
-        is_collapsed = folder_path in collapsed_folders
-        items.append((display_name, folder_path, True, None))  # (display name, path, is_folder, full_path)
         
-        # If folder is NOT collapsed, recurse into it
-        if not is_collapsed:
-            items.extend(flatten_tree_with_folders_collapsed(sub_tree, prefix=f"{prefix}{key}/", 
-                                                 folder_paths=folder_paths, 
-                                                 collapsed_folders=collapsed_folders))
+        # Check if this folder contains only one file and no subdirectories
+        if _folder_has_single_file(sub_tree):
+            # Skip the folder and show only the file with the folder path as prefix
+            for sub_key, sub_value in sub_tree.items():
+                if not isinstance(sub_value, dict):  # This is the single file
+                    display_name = f"{prefix}{key}/{sub_key}"
+                    items.append((display_name, f"{prefix}{key}/{sub_key}", False, sub_value))  # Show as file, not folder
+                    break
+        else:
+            # Show folder normally
+            display_name = f"{prefix}{key}/"
+            is_collapsed = folder_path in collapsed_folders
+            items.append((display_name, folder_path, True, None))  # (display name, path, is_folder, full_path)
+            
+            # If folder is NOT collapsed, recurse into it
+            if not is_collapsed:
+                items.extend(flatten_tree_with_folders_collapsed(sub_tree, prefix=f"{prefix}{key}/", 
+                                                     folder_paths=folder_paths, 
+                                                     collapsed_folders=collapsed_folders))
 
     return items
+
+
+def _folder_has_single_file(folder_tree: dict) -> bool:
+    """
+    Check if a folder contains only one file and no subdirectories.
+    """
+    file_count = 0
+    dir_count = 0
+    
+    for key, value in folder_tree.items():
+        if isinstance(value, dict):
+            # This is a subdirectory
+            dir_count += 1
+        else:
+            # This is a file
+            file_count += 1
+    
+    # Return True only if there's exactly one file and no subdirectories
+    return file_count == 1 and dir_count == 0
 
 
 def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathSpec | None = None, ignore_list: list[str] = DEFAULT_IGNORE_LIST) -> str:
