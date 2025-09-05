@@ -242,6 +242,96 @@ def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignor
     return tree
 
 
+def build_tree_with_folders(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignore_list: list[str]):
+    """Builds a nested dictionary representing the directory structure, including folders."""
+    tree = {}
+    # Use resolved absolute path for reliable comparison
+    base_dir_path = Path(directory).resolve()
+
+    # First, add all directories (even empty ones)
+    for dir_path in base_dir_path.rglob('*'):
+        if dir_path.is_dir():
+            try:
+                # Get path relative to the starting directory
+                relative_path = dir_path.relative_to(base_dir_path)
+                # Use posix for consistent matching
+                relative_path_str = str(relative_path.as_posix())
+
+                # 1. Check explicit ignore_list (faster check)
+                if any(part in ignore_list for part in relative_path.parts):
+                    continue
+                # Check if any parent dir is in ignore list
+                if any(ignore_item in parent.name for parent in relative_path.parents for ignore_item in ignore_list if parent != Path('.')):
+                    continue
+
+                # 2. Check combined .gitignore patterns
+                check_path = relative_path_str + '/'
+                if gitignore_specs and gitignore_specs.match_file(check_path):
+                    continue
+
+                # If not ignored, add to tree
+                current_level = tree
+                parts = relative_path.parts
+
+                for part in parts:
+                    current_level = current_level.setdefault(part, {})
+
+            except PermissionError:
+                continue  # Skip dirs we can't access
+            except Exception as e:
+                print(
+                    f"Warning: Error processing directory path {dir_path}: {e}", file=sys.stderr)
+                continue
+
+    # Then, add files to the tree
+    for item_path in base_dir_path.rglob('*'):
+        try:
+            # Get path relative to the starting directory
+            relative_path = item_path.relative_to(base_dir_path)
+            # Use posix for consistent matching
+            relative_path_str = str(relative_path.as_posix())
+
+            # 1. Check explicit ignore_list (faster check)
+            if any(part in ignore_list for part in relative_path.parts):
+                continue
+            # Check if any parent dir is in ignore list
+            if any(ignore_item in parent.name for parent in relative_path.parents for ignore_item in ignore_list if parent != Path('.')):
+                continue
+
+            # 2. Check combined .gitignore patterns
+            check_path = relative_path_str + '/' if item_path.is_dir() else relative_path_str
+            if gitignore_specs and gitignore_specs.match_file(check_path):
+                continue
+
+            # 3. For files, check if they are text files
+            if item_path.is_file() and not is_text_file(item_path):
+                continue
+
+            # If not ignored, add to tree
+            current_level = tree
+            parts = relative_path.parts
+
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:  # Last part (file or dir name)
+                    if item_path.is_file():
+                        # Store full absolute path as value for files
+                        current_level[part] = str(item_path)
+                    elif item_path.is_dir():
+                        # Ensure directory entry exists
+                        current_level = current_level.setdefault(part, {})
+                else:  # Intermediate directory part
+                    current_level = current_level.setdefault(part, {})
+
+        except PermissionError:
+            continue  # Skip files/dirs we can't access
+        except Exception as e:
+            print(
+                f"Warning: Error processing path {item_path}: {e}", file=sys.stderr)
+            continue
+
+    return tree
+
+
 def flatten_tree(tree, prefix=''):
     """Flattens the tree for display, ensuring files come before subdirs at each level."""
     items = []
@@ -264,6 +354,90 @@ def flatten_tree(tree, prefix=''):
     for key, sub_tree in sorted(dirs_at_level.items()):
         dir_prefix = f"{prefix}{key}/"
         items.extend(flatten_tree(sub_tree, prefix=dir_prefix))
+
+    return items
+
+
+def flatten_tree_with_folders(tree, prefix='', folder_paths=None, expanded_folders=None):
+    """
+    Flattens the tree for display, including folders.
+    Returns list of tuples: (display_name, path, is_folder, full_path_if_file)
+    """
+    if folder_paths is None:
+        folder_paths = {}
+    if expanded_folders is None:
+        expanded_folders = set()
+        
+    items = []
+    # Process files and folders at the current level, sorted alphabetically
+    files_at_level = {}
+    dirs_at_level = {}
+
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            dirs_at_level[key] = value
+        else:
+            files_at_level[key] = value
+
+    # Add sorted files
+    for key, full_path in sorted(files_at_level.items()):
+        display_name = f"{prefix}{key}"
+        items.append((display_name, f"{prefix}{key}", False, full_path))  # (display name, path, is_folder, full_path)
+
+    # Add sorted folders
+    for key, sub_tree in sorted(dirs_at_level.items()):
+        folder_path = f"{prefix}{key}"
+        display_name = f"{prefix}{key}/"
+        is_expanded = folder_path in expanded_folders
+        items.append((display_name, folder_path, True, None))  # (display name, path, is_folder, full_path)
+        
+        # If folder is expanded, recurse into it
+        if is_expanded:
+            items.extend(flatten_tree_with_folders(sub_tree, prefix=f"{prefix}{key}/", 
+                                                 folder_paths=folder_paths, 
+                                                 expanded_folders=expanded_folders))
+
+    return items
+
+
+def flatten_tree_with_folders_collapsed(tree, prefix='', folder_paths=None, collapsed_folders=None):
+    """
+    Flattens the tree for display, including folders, with collapsed state tracking.
+    Returns list of tuples: (display_name, path, is_folder, full_path_if_file)
+    """
+    if folder_paths is None:
+        folder_paths = {}
+    if collapsed_folders is None:
+        collapsed_folders = set()
+        
+    items = []
+    # Process files and folders at the current level, sorted alphabetically
+    files_at_level = {}
+    dirs_at_level = {}
+
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            dirs_at_level[key] = value
+        else:
+            files_at_level[key] = value
+
+    # Add sorted files
+    for key, full_path in sorted(files_at_level.items()):
+        display_name = f"{prefix}{key}"
+        items.append((display_name, f"{prefix}{key}", False, full_path))  # (display name, path, is_folder, full_path)
+
+    # Add sorted folders
+    for key, sub_tree in sorted(dirs_at_level.items()):
+        folder_path = f"{prefix}{key}"
+        display_name = f"{prefix}{key}/"
+        is_collapsed = folder_path in collapsed_folders
+        items.append((display_name, folder_path, True, None))  # (display name, path, is_folder, full_path)
+        
+        # If folder is NOT collapsed, recurse into it
+        if not is_collapsed:
+            items.extend(flatten_tree_with_folders_collapsed(sub_tree, prefix=f"{prefix}{key}/", 
+                                                 folder_paths=folder_paths, 
+                                                 collapsed_folders=collapsed_folders))
 
     return items
 

@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 import pathspec # For type hint
 
+# Import our new folder_utils
+from . import folder_utils
+
 # --- Helper Function to Check Terminal Color Support ---
 def check_color_support():
     """Checks if the terminal likely supports colors."""
@@ -27,9 +30,11 @@ def check_color_support():
 
 # --- Constants for Curses Colors ---
 COLOR_PAIR_DEFAULT = 0
-COLOR_PAIR_FOLDER = 1
-COLOR_PAIR_STATUS = 2
-COLOR_PAIR_HIGHLIGHT = 3 # For the cursor line background/foreground
+COLOR_PAIR_FOLDER_PATH = 1  # Blue for folder paths in file listings
+COLOR_PAIR_FOLDER_ITEM = 2  # Orange for folder items in the list
+COLOR_PAIR_FILE = 3
+COLOR_PAIR_STATUS = 4 # For the cursor line background/foreground
+COLOR_PAIR_HIGHLIGHT = 5 # For the cursor line background/foreground
 
 
 # --- Main Selection Function ---
@@ -39,26 +44,43 @@ def select_files(
     gitignore_specs: pathspec.PathSpec | None,
     ignore_list: list[str]
 ) -> list[str]:
-    """Interactively selects files using curses, hiding folders and coloring paths."""
+    """Interactively selects files using curses, showing folders and coloring paths."""
 
     # Import build_tree and flatten_tree locally to avoid circular dependency potential
     # OR restructure file_utils slightly if needed. Assume they are importable.
     from . import file_utils
+    from . import summary_utils
 
-    tree = file_utils.build_tree(directory, gitignore_specs, ignore_list)
-    # flatten_tree returns (display_name: str, full_path: str) tuples
-    flattened_files = file_utils.flatten_tree(tree)
+    tree = file_utils.build_tree_with_folders(directory, gitignore_specs, ignore_list)
+    # Track folder states: expanded/collapsed and paths
+    collapsed_folders = set()  # Set of folder paths that are collapsed
+    folder_paths = {}  # Map of folder display paths to actual paths
+
+    # Read previous collapsed folder states
+    previous_collapsed = summary_utils.read_previous_collapsed_folders(directory)
+    if previous_collapsed is not None:
+        collapsed_folders = set(previous_collapsed)
+    # If no previous state, all folders are expanded by default (empty collapsed_folders set)
+    
+    # flatten_tree_with_folders returns (display_name, path, is_folder, full_path_if_file) tuples
+    flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
 
     # Convert previous_selection (absolute paths) to a set for efficient lookup
     # Ensure paths from previous selection are resolved absolute paths
     selected_paths = set(str(Path(p).resolve()) for p in previous_selection)
 
-    # Prepare options for curses: (display_name, full_path)
-    options = [(display, path) for display, path in flattened_files]
+    # Prepare options for curses: (display_name, path, is_folder, full_path)
+    options = [(display, path, is_folder, full_path) for display, path, is_folder, full_path in flattened_items]
+    
+    # Store the directory path for display in the header
+    directory_path = str(directory.resolve())
+    
+    # Store reference to tree for folder operations
+    tree_ref = tree
 
     # --- Curses Main Logic (Inner Function) ---
     def _curses_main(stdscr):
-        nonlocal selected_paths # Allow modification of the set from parent scope
+        nonlocal selected_paths, collapsed_folders # Allow modification of the set from parent scope
         curses.curs_set(0)  # Hide cursor
         current_page = 0
         current_pos = 0
@@ -71,13 +93,17 @@ def select_files(
                   curses.use_default_colors() # Try for transparent background
                   # Define color pairs (adjust colors as desired)
                   curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, -1)
-                  curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_CYAN, -1)
+                  curses.init_pair(COLOR_PAIR_FOLDER_PATH, curses.COLOR_BLUE, -1)  # Blue for folder paths
+                  curses.init_pair(COLOR_PAIR_FOLDER_ITEM, curses.COLOR_GREEN, -1)  # Green for folder items
+                  curses.init_pair(COLOR_PAIR_FILE, curses.COLOR_WHITE, -1)
                   curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE) # Status bar
                   curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_CYAN) # Highlight line
              else:
                   # Define fallback pairs for monochrome if needed, though A_REVERSE works
                   curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK)
-                  curses.init_pair(COLOR_PAIR_FOLDER, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_FOLDER_PATH, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_FOLDER_ITEM, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_FILE, curses.COLOR_WHITE, curses.COLOR_BLACK)
                   curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE)
                   curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_WHITE)
         except curses.error as e:
@@ -109,7 +135,7 @@ def select_files(
                  current_pos = 0
 
             # --- Draw Menu ---
-            _draw_menu(stdscr, options, selected_paths, current_page, current_pos, page_size, has_color)
+            _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path)
 
             # --- Get Key ---
             try:
@@ -123,34 +149,66 @@ def select_files(
             total_pages = (total_options + page_size - 1) // page_size if page_size > 0 else 1
 
             if key == ord('q') or key == 27: # Quit
+                # Save collapsed folder states before quitting
+                summary_utils.write_previous_collapsed_folders(list(collapsed_folders), directory)
                 # Optionally ask for confirmation? For now, just quit.
                 # We need to return the *original* selection if user quits.
                 # Let's return None to signal cancellation.
                 selected_paths = None # Signal cancellation
                 break
             elif key == ord('a') or key == ord('A'):  # Select/Deselect all
-                # Get all paths from options
-                all_paths = set(str(Path(full_path).resolve()) for _, full_path in options)
+                # Get all file paths from options
+                all_file_paths = set(str(Path(full_path).resolve()) for _, _, is_folder, full_path in options if not is_folder and full_path)
                 # If all files are already selected, deselect all
-                if selected_paths == all_paths:
+                if selected_paths == all_file_paths:
                     selected_paths.clear()
                 else:
                     # Otherwise, select all
-                    selected_paths.update(all_paths)
+                    selected_paths.update(all_file_paths)
             elif key == ord(' '): # Toggle selection
                 if 0 <= current_abs_index < total_options:
-                    _, full_path = options[current_abs_index]
-                    resolved_path = str(Path(full_path).resolve()) # Use resolved path for set
-                    if resolved_path in selected_paths:
-                        selected_paths.remove(resolved_path)
+                    _, path, is_folder, full_path = options[current_abs_index]
+                    if is_folder:
+                        # Toggle folder collapse
+                        if path in collapsed_folders:
+                            collapsed_folders.discard(path)
+                        else:
+                            collapsed_folders.add(path)
+                        # Rebuild options with new collapsed state
+                        flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
+                        options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
                     else:
-                        selected_paths.add(resolved_path)
-                    # Move down after selection (optional usability enhancement)
-                    if current_pos < max_pos_on_page:
-                         current_pos += 1
-                    elif current_page < total_pages - 1:
-                          current_page += 1
-                          current_pos = 0
+                        # Toggle file selection
+                        resolved_path = str(Path(full_path).resolve()) # Use resolved path for set
+                        if resolved_path in selected_paths:
+                            selected_paths.remove(resolved_path)
+                        else:
+                            selected_paths.add(resolved_path)
+                        # Move down after selection (optional usability enhancement)
+                        if current_pos < max_pos_on_page:
+                             current_pos += 1
+                        elif current_page < total_pages - 1:
+                              current_page += 1
+                              current_pos = 0
+
+            elif key == ord('f') or key == ord('F'):  # Toggle folder selection
+                if 0 <= current_abs_index < total_options:
+                    _, path, is_folder, full_path = options[current_abs_index]
+                    if is_folder:
+                        # Get all files in this folder
+                        folder_files = folder_utils.collect_files_in_folder(path, tree_ref)
+                        # Convert to resolved paths for comparison
+                        resolved_folder_files = set(str(Path(f).resolve()) for f in folder_files)
+                        
+                        # Check if all files in folder are currently selected
+                        all_selected = resolved_folder_files.issubset(selected_paths)
+                        
+                        if all_selected:
+                            # Deselect all files in folder
+                            selected_paths.difference_update(resolved_folder_files)
+                        else:
+                            # Select all files in folder
+                            selected_paths.update(resolved_folder_files)
 
             elif key == curses.KEY_UP:
                 if current_pos > 0:
@@ -181,6 +239,8 @@ def select_files(
                     current_pos = 0
 
             elif key == 10 or key == curses.KEY_ENTER:  # Confirm selection
+                # Save collapsed folder states before confirming
+                summary_utils.write_previous_collapsed_folders(list(collapsed_folders), directory)
                 break # Exit loop, selected_paths holds the final set
 
             elif key == curses.KEY_RESIZE: # Handle terminal resize
@@ -193,13 +253,13 @@ def select_files(
         return selected_paths
 
     # --- Draw Menu Helper (Inner Function) ---
-    def _draw_menu(stdscr, options, selected_paths, current_page, current_pos, page_size, has_color):
+    def _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path):
         stdscr.clear()
         h, w = stdscr.getmaxyx()
 
         # Instructions
-        title = "CodeSum File Selection"
-        instructions = "[SPACE] Toggle | [A] Select/Deselect All | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+        title = f"CodeSum File Selection - {directory_path}"
+        instructions = "[SPACE] Toggle/File Collapse | [F] Select/Deselect Folder | [A] Select/Deselect All Files | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
         try:
             stdscr.addstr(0, 0, title.ljust(w-1))
             stdscr.addstr(1, 0, instructions.ljust(w-1))
@@ -211,40 +271,59 @@ def select_files(
         end_idx = min(start_idx + page_size, len(options))
         current_options_page = options[start_idx:end_idx]
 
-        # Display file list
-        for idx, (display_name, full_path) in enumerate(current_options_page):
+        # Display file/folder list
+        for idx, (display_name, path, is_folder, full_path) in enumerate(current_options_page):
             y_pos = idx + 3 # Start below headers
 
-            resolved_path = str(Path(full_path).resolve()) # Use resolved path for checking selection
-            is_selected = resolved_path in selected_paths
+            is_selected = False
+            if is_folder:
+                # For folders, show as expanded/collapsed
+                is_selected = path not in collapsed_folders
+            else:
+                # For files, check if selected
+                resolved_path = str(Path(full_path).resolve()) # Use resolved path for checking selection
+                is_selected = resolved_path in selected_paths
             is_highlighted = idx == current_pos
 
             # Determine attributes
             attr = curses.A_NORMAL
-            folder_attr = curses.A_NORMAL
+            folder_path_attr = curses.A_NORMAL
+            folder_item_attr = curses.A_NORMAL
             file_attr = curses.A_NORMAL
 
             if has_color:
                 default_pair = curses.color_pair(COLOR_PAIR_DEFAULT)
-                folder_pair = curses.color_pair(COLOR_PAIR_FOLDER)
+                folder_path_pair = curses.color_pair(COLOR_PAIR_FOLDER_PATH)
+                folder_item_pair = curses.color_pair(COLOR_PAIR_FOLDER_ITEM)
+                file_pair = curses.color_pair(COLOR_PAIR_FILE)
                 highlight_pair = curses.color_pair(COLOR_PAIR_HIGHLIGHT)
                 attr |= default_pair
-                folder_attr |= folder_pair
-                file_attr |= default_pair
+                folder_path_attr |= folder_path_pair
+                folder_item_attr |= folder_item_pair
+                file_attr |= file_pair
                 if is_highlighted:
                     # Apply highlight pair to all parts of the line
                     attr = highlight_pair | curses.A_BOLD # Make highlighted bold
-                    folder_attr = highlight_pair | curses.A_BOLD
+                    folder_path_attr = highlight_pair | curses.A_BOLD
+                    folder_item_attr = highlight_pair | curses.A_BOLD
                     file_attr = highlight_pair | curses.A_BOLD
             elif is_highlighted:
                  attr = curses.A_REVERSE # Fallback highlight for monochrome
-                 folder_attr = curses.A_REVERSE
+                 folder_path_attr = curses.A_REVERSE
+                 folder_item_attr = curses.A_REVERSE
                  file_attr = curses.A_REVERSE
 
 
             # Render line components
-            checkbox = "[X]" if is_selected else "[ ]"
-            prefix = f"{checkbox} "
+            if is_folder:
+                # Show folder with +/- indicator
+                indicator = "[-]" if is_selected else "[+]"
+                checkbox = f"{indicator} "
+            else:
+                # Show file with regular checkbox
+                checkbox = "[X] " if is_selected else "[ ] "
+                
+            prefix = f"{checkbox}"
             max_name_width = w - len(prefix) - 1 # Max width for the display name
 
             # Truncate display name if necessary
@@ -261,13 +340,20 @@ def select_files(
             x_offset = len(prefix)
             last_slash_idx = truncated_name.rfind('/')
             try:
-                if has_color and last_slash_idx != -1:
+                if is_folder and has_color:
+                    # Entire name is a folder item, use orange color
+                    stdscr.addstr(y_pos, x_offset, truncated_name, folder_item_attr)
+                elif has_color and last_slash_idx != -1:
+                    # File with path, color the path part blue and file part white
                     path_part = truncated_name[:last_slash_idx + 1]
                     file_part = truncated_name[last_slash_idx + 1:]
-                    stdscr.addstr(y_pos, x_offset, path_part, folder_attr)
+                    stdscr.addstr(y_pos, x_offset, path_part, folder_path_attr)
                     # Check bounds before drawing file part
                     if x_offset + len(path_part) < w:
                          stdscr.addstr(y_pos, x_offset + len(path_part), file_part, file_attr)
+                elif not is_folder and has_color:
+                    # Entire name is a file, use white color
+                    stdscr.addstr(y_pos, x_offset, truncated_name, file_attr)
                 else:
                     # No color or no slash, draw whole name with base attr
                     stdscr.addstr(y_pos, x_offset, truncated_name, attr)
@@ -280,7 +366,7 @@ def select_files(
 
         # Status line
         total_pages = (len(options) + page_size - 1) // page_size if page_size > 0 else 1
-        status = f" Page {current_page + 1}/{total_pages} | Files {start_idx + 1}-{end_idx} of {len(options)} | Selected: {len(selected_paths)} "
+        status = f" Page {current_page + 1}/{total_pages} | Items {start_idx + 1}-{end_idx} of {len(options)} | Selected: {len(selected_paths)} "
         status_attr = curses.color_pair(COLOR_PAIR_STATUS) if has_color else curses.A_REVERSE
         try:
             stdscr.addstr(h - 1, 0, status.ljust(w-1), status_attr)

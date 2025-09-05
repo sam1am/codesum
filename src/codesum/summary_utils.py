@@ -15,6 +15,7 @@ CUSTOM_IGNORE_FILENAME = "codesum_ignore.txt"
 CODE_SUMMARY_FILENAME = "code_summary.md"
 COMPRESSED_SUMMARY_FILENAME = "compressed_code_summary.md"
 SELECTION_FILENAME = "previous_selection.json"
+COLLAPSED_FOLDERS_FILENAME = "collapsed_folders.json"
 METADATA_SUFFIX = "_metadata.json"
 
 def get_summary_dir(base_dir: Path = Path('.')) -> Path:
@@ -284,3 +285,52 @@ def copy_summary_to_clipboard(base_dir: Path = Path('.')):
     else:
         print("Local code summary file not found, skipping clipboard copy.", file=sys.stderr)
     return False
+
+
+def read_previous_collapsed_folders(base_dir: Path = Path('.')) -> list[str] | None:
+    """Reads previously collapsed folder paths from JSON in the summary dir."""
+    collapsed_folders_file = get_summary_dir(base_dir) / COLLAPSED_FOLDERS_FILENAME
+    if collapsed_folders_file.exists():
+        try:
+            with open(collapsed_folders_file, "r", encoding='utf-8') as f:
+                previous_collapsed = json.load(f)
+            # Basic validation: ensure it's a list of strings
+            if isinstance(previous_collapsed, list) and all(isinstance(item, str) for item in previous_collapsed):
+                return previous_collapsed
+            else:
+                print(
+                    f"Warning: Invalid format in {collapsed_folders_file}. Ignoring.", file=sys.stderr)
+                return None
+        except json.JSONDecodeError:
+            print(
+                f"Warning: Could not decode {collapsed_folders_file}. Ignoring.", file=sys.stderr)
+            return None
+        except IOError as e:
+            print(
+                f"Warning: Could not read {collapsed_folders_file}: {e}. Ignoring.", file=sys.stderr)
+            return None
+    else:
+        return None
+
+
+def write_previous_collapsed_folders(collapsed_folders: list[str], base_dir: Path = Path('.')):
+    """Writes the list of collapsed folder paths to JSON."""
+    hidden_directory = get_summary_dir(base_dir)
+    collapsed_folders_file = hidden_directory / COLLAPSED_FOLDERS_FILENAME
+    if not hidden_directory.exists():
+        # Attempt to create it if missing
+        create_hidden_directory(base_dir)
+        if not hidden_directory.exists(): # Check again if creation failed
+             print(f"Warning: Cannot save collapsed folders, directory {hidden_directory} not found/creatable.", file=sys.stderr)
+             return
+    try:
+        # Ensure collapsed_folders is a list of strings
+        if isinstance(collapsed_folders, list) and all(isinstance(item, str) for item in collapsed_folders):
+            with open(collapsed_folders_file, "w", encoding='utf-8') as f:
+                json.dump(collapsed_folders, f, indent=4)
+        else:
+            print("Error: Invalid data type for collapsed_folders. Cannot save collapsed folders.", file=sys.stderr)
+    except IOError as e:
+        print(f"Error writing collapsed folders file {collapsed_folders_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing collapsed folders data to JSON: {e}", file=sys.stderr)
