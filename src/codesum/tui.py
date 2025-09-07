@@ -110,6 +110,9 @@ def select_files(
 
     tree = file_utils.build_tree_with_folders(directory, gitignore_specs, ignore_list)
     
+    # Determine if we're in single file mode (only one file at root level)
+    single_file_mode = _is_single_file_at_root(tree)
+    
     # Track folder states: expanded/collapsed and paths
     collapsed_folders = set()  # Set of folder paths that are collapsed
     folder_paths = {}  # Map of folder display paths to actual paths
