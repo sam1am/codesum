@@ -243,47 +243,12 @@ def build_tree(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignor
 
 
 def build_tree_with_folders(directory: Path, gitignore_specs: pathspec.PathSpec | None, ignore_list: list[str]):
-    """Builds a nested dictionary representing the directory structure, including folders."""
+    """Builds a nested dictionary representing the directory structure, including folders with files."""
     tree = {}
     # Use resolved absolute path for reliable comparison
     base_dir_path = Path(directory).resolve()
 
-    # First, add all directories (even empty ones)
-    for dir_path in base_dir_path.rglob('*'):
-        if dir_path.is_dir():
-            try:
-                # Get path relative to the starting directory
-                relative_path = dir_path.relative_to(base_dir_path)
-                # Use posix for consistent matching
-                relative_path_str = str(relative_path.as_posix())
-
-                # 1. Check explicit ignore_list (faster check)
-                if any(part in ignore_list for part in relative_path.parts):
-                    continue
-                # Check if any parent dir is in ignore list
-                if any(ignore_item in parent.name for parent in relative_path.parents for ignore_item in ignore_list if parent != Path('.')):
-                    continue
-
-                # 2. Check combined .gitignore patterns
-                check_path = relative_path_str + '/'
-                if gitignore_specs and gitignore_specs.match_file(check_path):
-                    continue
-
-                # If not ignored, add to tree
-                current_level = tree
-                parts = relative_path.parts
-
-                for part in parts:
-                    current_level = current_level.setdefault(part, {})
-
-            except PermissionError:
-                continue  # Skip dirs we can't access
-            except Exception as e:
-                print(
-                    f"Warning: Error processing directory path {dir_path}: {e}", file=sys.stderr)
-                continue
-
-    # Then, add files to the tree
+    # First, collect all files
     for item_path in base_dir_path.rglob('*'):
         try:
             # Get path relative to the starting directory
@@ -307,20 +272,17 @@ def build_tree_with_folders(directory: Path, gitignore_specs: pathspec.PathSpec 
             if item_path.is_file() and not is_text_file(item_path):
                 continue
 
-            # If not ignored, add to tree
-            current_level = tree
-            parts = relative_path.parts
+            # If not ignored and is a file, add to tree
+            if item_path.is_file():
+                current_level = tree
+                parts = relative_path.parts
 
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:  # Last part (file or dir name)
-                    if item_path.is_file():
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:  # Last part (file name)
                         # Store full absolute path as value for files
                         current_level[part] = str(item_path)
-                    elif item_path.is_dir():
-                        # Ensure directory entry exists
+                    else:  # Intermediate directory part
                         current_level = current_level.setdefault(part, {})
-                else:  # Intermediate directory part
-                    current_level = current_level.setdefault(part, {})
 
         except PermissionError:
             continue  # Skip files/dirs we can't access
@@ -329,7 +291,23 @@ def build_tree_with_folders(directory: Path, gitignore_specs: pathspec.PathSpec 
                 f"Warning: Error processing path {item_path}: {e}", file=sys.stderr)
             continue
 
-    return tree
+    # Now filter out empty folders (folders that contain no files in their entire subtree)
+    def _filter_empty_folders(tree_node: dict) -> dict:
+        """Recursively remove empty folders from the tree."""
+        filtered = {}
+        for key, value in tree_node.items():
+            if isinstance(value, dict):
+                # This is a folder, recursively filter it
+                filtered_subtree = _filter_empty_folders(value)
+                # Only include the folder if it contains files after filtering
+                if filtered_subtree:
+                    filtered[key] = filtered_subtree
+            else:
+                # This is a file, keep it
+                filtered[key] = value
+        return filtered
+
+    return _filter_empty_folders(tree)
 
 
 def flatten_tree(tree, prefix=''):
@@ -471,6 +449,20 @@ def _folder_has_single_file(folder_tree: dict) -> bool:
     
     # Return True only if there's exactly one file and no subdirectories
     return file_count == 1 and dir_count == 0
+
+
+def _tree_contains_files(tree: dict) -> bool:
+    """Check if a tree structure contains any files (not just empty folders)."""
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            # This is a subdirectory, check recursively
+            if _tree_contains_files(value):
+                return True
+        else:
+            # This is a file
+            return True
+    return False
+
 
 
 def get_tree_output(directory: Path = Path('.'), gitignore_specs: pathspec.PathSpec | None = None, ignore_list: list[str] = DEFAULT_IGNORE_LIST) -> str:

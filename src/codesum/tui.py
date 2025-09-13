@@ -219,17 +219,20 @@ def select_files(
                 break
             elif key == ord('a') or key == ord('A'):  # Select/Deselect all
                 # Get all file paths from options
-                all_file_paths = set(str(Path(full_path).resolve()) for _, _, is_folder, full_path in options if not is_folder and full_path)
-                # If all files are already selected, deselect all
-                if selected_paths == all_file_paths:
-                    selected_paths.clear()
+                all_file_paths = set(str(Path(full_path).resolve()) for _, _,
+                                    is_folder, full_path in options if not is_folder and full_path)
+                # Check if all currently visible files are selected (use subset instead of equality)
+                if all_file_paths and all_file_paths.issubset(selected_paths):
+                    # All visible files are selected, so deselect only the visible ones
+                    selected_paths.difference_update(all_file_paths)
                 else:
-                    # Otherwise, select all (only applicable when not in single file mode)
+                    # Otherwise, select all visible files
                     if not single_file_mode:
                         selected_paths.update(all_file_paths)
                     # In single file mode, just select the one file
                     elif all_file_paths:
                         selected_paths.update(all_file_paths)
+
             elif key == ord(' '): # Toggle selection
                 if 0 <= current_abs_index < total_options:
                     display_name, path, is_folder, full_path = options[current_abs_index]
