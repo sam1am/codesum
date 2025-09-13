@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codesum"
-version = "0.2.13" # Incremented version
+version = "0.2.14" # Incremented version
 authors = [
   { name="Sam G" },
 ]
