@@ -6,8 +6,56 @@ import pathspec # For type hint
 
 # Import our new folder_utils
 from . import folder_utils
+from . import openai_utils
 
 # --- Helper Functions ---
+
+# Token count cache to avoid recalculating for the same files
+_token_cache = {}
+
+def _get_file_token_count(file_path: str) -> int:
+    """
+    Get token count for a file, with caching to improve performance.
+    Returns -1 if file cannot be read or processed.
+    """
+    try:
+        file_path_obj = Path(file_path)
+        
+        # Check if file exists and get its modification time for cache key
+        if not file_path_obj.exists():
+            return -1
+            
+        mtime = file_path_obj.stat().st_mtime
+        cache_key = (file_path, mtime)
+        
+        # Return cached result if available
+        if cache_key in _token_cache:
+            return _token_cache[cache_key]
+        
+        # Read file and count tokens
+        with open(file_path_obj, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        token_count = openai_utils.count_tokens(content)
+        
+        # Cache the result
+        _token_cache[cache_key] = token_count
+        return token_count
+        
+    except Exception:
+        return -1
+
+def _format_token_count(token_count: int) -> str:
+    """Format token count for display."""
+    if token_count < 0:
+        return "(?)"
+    elif token_count < 1000:
+        return f"{token_count}"
+    elif token_count < 1000000:
+        return f"{token_count/1000:.1f}k"
+    else:
+        return f"{token_count/1000000:.1f}M"
+
 def _is_single_file_at_root(tree: dict) -> bool:
     """
     Check if there's only one file at the root level with no subdirectories.
@@ -146,6 +194,15 @@ def select_files(
         current_page = 0
         current_pos = 0
         has_color = False # Determined after curses init
+        
+        # Calculate total token count for selected files
+        def _calculate_total_tokens():
+            total = 0
+            for file_path in selected_paths:
+                token_count = _get_file_token_count(file_path)
+                if token_count > 0:
+                    total += token_count
+            return total
 
         # Initialize colors safely
         try:
@@ -196,7 +253,8 @@ def select_files(
                  current_pos = 0
 
             # --- Draw Menu ---
-            _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path)
+            total_tokens = _calculate_total_tokens()
+            _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
 
             # --- Get Key ---
             try:
@@ -321,15 +379,27 @@ def select_files(
         return selected_paths
 
     # --- Draw Menu Helper (Inner Function) ---
-    def _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path):
+    def _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens):
         stdscr.clear()
         h, w = stdscr.getmaxyx()
 
         # Instructions
         title = f"CodeSum File Selection - {directory_path}"
+        token_info = f"Total Selected Tokens: {_format_token_count(total_tokens)}"
         instructions = "[SPACE] Toggle/File Collapse | [F] Select/Deselect Folder | [A] Select/Deselect All Files | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
         try:
             stdscr.addstr(0, 0, title.ljust(w-1))
+            # Show token count right-aligned on the same line as title if there's space
+            if len(title) + len(token_info) + 3 <= w:
+                stdscr.addstr(0, w - len(token_info), token_info)
+            else:
+                # If not enough space, show on separate line
+                stdscr.addstr(1, 0, token_info.ljust(w-1))
+                stdscr.addstr(2, 0, instructions.ljust(w-1))
+                stdscr.addstr(3, 0, "-" * (w - 1))
+                # Adjust y positions for file list later
+                return
+            
             stdscr.addstr(1, 0, instructions.ljust(w-1))
             stdscr.addstr(2, 0, "-" * (w - 1))
         except curses.error: pass # Ignore errors if window too small
@@ -387,12 +457,19 @@ def select_files(
                 # Show folder with +/- indicator
                 indicator = "[-]" if is_selected else "[+]"
                 checkbox = f"{indicator} "
+                token_suffix = ""
             else:
-                # Show file with regular checkbox
+                # Show file with regular checkbox and token count
                 checkbox = "[X] " if is_selected else "[ ] "
+                if full_path:
+                    token_count = _get_file_token_count(full_path)
+                    token_suffix = f" ({_format_token_count(token_count)})"
+                else:
+                    token_suffix = ""
                 
             prefix = f"{checkbox}"
-            max_name_width = w - len(prefix) - 1 # Max width for the display name
+            suffix_len = len(token_suffix)
+            max_name_width = w - len(prefix) - suffix_len - 1 # Max width for the display name
 
             # Truncate display name if necessary
             truncated_name = display_name
@@ -407,6 +484,7 @@ def select_files(
             # Draw name (with potential color split)
             x_offset = len(prefix)
             last_slash_idx = truncated_name.rfind('/')
+            name_end_pos = x_offset + len(truncated_name)
             try:
                 if is_folder and has_color:
                     # Entire name is a folder item, use orange color
@@ -425,11 +503,22 @@ def select_files(
                 else:
                     # No color or no slash, draw whole name with base attr
                     stdscr.addstr(y_pos, x_offset, truncated_name, attr)
+                
+                # Draw token suffix if it exists (in dimmed style)
+                if token_suffix and name_end_pos + len(token_suffix) < w:
+                    # Use dimmed attribute for token count to make it less prominent
+                    token_attr = attr | curses.A_DIM if has_color else attr | curses.A_DIM
+                    stdscr.addstr(y_pos, name_end_pos, token_suffix, token_attr)
+                    
             except curses.error:
                 # Attempt to draw truncated version if full fails near edge
                 try:
-                     safe_name = truncated_name[:w-x_offset-1]
+                     safe_name = truncated_name[:w-x_offset-suffix_len-1]
                      stdscr.addstr(y_pos, x_offset, safe_name, attr)
+                     if token_suffix and x_offset + len(safe_name) + len(token_suffix) < w:
+                         # Use dimmed attribute for token count in fallback case too
+                         token_attr = attr | curses.A_DIM
+                         stdscr.addstr(y_pos, x_offset + len(safe_name), token_suffix, token_attr)
                 except curses.error: pass # Final fallback: ignore draw error
 
 
