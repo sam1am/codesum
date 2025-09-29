@@ -136,7 +136,8 @@ def check_color_support():
 # --- Constants for Curses Colors ---
 COLOR_PAIR_DEFAULT = 0
 COLOR_PAIR_FOLDER_PATH = 1  # Blue for folder paths in file listings
-COLOR_PAIR_FOLDER_ITEM = 2  # Orange for folder items in the list
+COLOR_PAIR_FOLDER_ITEM = 2  # Green for expanded folder items in the list
+COLOR_PAIR_COLLAPSED_FOLDER = 6  # Darker green for collapsed folder items in the list
 COLOR_PAIR_FILE = 3
 COLOR_PAIR_STATUS = 4 # For the cursor line background/foreground
 COLOR_PAIR_HIGHLIGHT = 5 # For the cursor line background/foreground
@@ -212,7 +213,8 @@ def select_files(
                   # Define color pairs (adjust colors as desired)
                   curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, -1)
                   curses.init_pair(COLOR_PAIR_FOLDER_PATH, curses.COLOR_BLUE, -1)  # Blue for folder paths
-                  curses.init_pair(COLOR_PAIR_FOLDER_ITEM, curses.COLOR_GREEN, -1)  # Green for folder items
+                  curses.init_pair(COLOR_PAIR_FOLDER_ITEM, curses.COLOR_GREEN, -1)  # Green for expanded folder items
+                  curses.init_pair(COLOR_PAIR_COLLAPSED_FOLDER, curses.COLOR_GREEN, -1)  # Darker green for collapsed folder items
                   curses.init_pair(COLOR_PAIR_FILE, curses.COLOR_WHITE, -1)
                   curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE) # Status bar
                   curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_CYAN) # Highlight line
@@ -221,6 +223,7 @@ def select_files(
                   curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK)
                   curses.init_pair(COLOR_PAIR_FOLDER_PATH, curses.COLOR_WHITE, curses.COLOR_BLACK)
                   curses.init_pair(COLOR_PAIR_FOLDER_ITEM, curses.COLOR_WHITE, curses.COLOR_BLACK)
+                  curses.init_pair(COLOR_PAIR_COLLAPSED_FOLDER, curses.COLOR_WHITE, curses.COLOR_BLACK)  # For collapsed folders in monochrome
                   curses.init_pair(COLOR_PAIR_FILE, curses.COLOR_WHITE, curses.COLOR_BLACK)
                   curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE)
                   curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_WHITE)
@@ -433,6 +436,7 @@ def select_files(
                 default_pair = curses.color_pair(COLOR_PAIR_DEFAULT)
                 folder_path_pair = curses.color_pair(COLOR_PAIR_FOLDER_PATH)
                 folder_item_pair = curses.color_pair(COLOR_PAIR_FOLDER_ITEM)
+                collapsed_folder_pair = curses.color_pair(COLOR_PAIR_COLLAPSED_FOLDER)
                 file_pair = curses.color_pair(COLOR_PAIR_FILE)
                 highlight_pair = curses.color_pair(COLOR_PAIR_HIGHLIGHT)
                 attr |= default_pair
@@ -458,6 +462,16 @@ def select_files(
                 indicator = "[-]" if is_selected else "[+]"
                 checkbox = f"{indicator} "
                 token_suffix = ""
+                
+                # Use different color for collapsed folders
+                if has_color and not is_selected:  # Collapsed folder (is_selected = path not in collapsed_folders)
+                    folder_item_attr = collapsed_folder_pair | curses.A_DIM  # Use the collapsed folder color with dim effect for darker green
+                    if is_highlighted:
+                        folder_item_attr = highlight_pair | curses.A_BOLD
+                elif has_color and is_highlighted:
+                    folder_item_attr = highlight_pair | curses.A_BOLD  # Highlight expanded folders when selected
+                elif has_color and is_selected:  # Expanded folder
+                    folder_item_attr = folder_item_pair  # Use the expanded folder color
             else:
                 # Show file with regular checkbox and token count
                 checkbox = "[X] " if is_selected else "[ ] "
