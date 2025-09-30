@@ -202,6 +202,7 @@ def select_files(
         current_pos = 0
         has_color = False # Determined after curses init
         show_help = False  # Track whether help popup is visible
+        show_configs = False  # Track whether configs popup is visible
         interrupted = False  # Track if Ctrl+C was pressed
 
         # Enable mouse support
@@ -292,6 +293,8 @@ def select_files(
             total_tokens = _calculate_total_tokens()
             if show_help:
                 _draw_help_popup(stdscr, has_color)
+            elif show_configs:
+                _draw_configs_popup(stdscr, has_color, directory)
             else:
                 _draw_menu(stdscr, options, selected_paths, compressed_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
 
@@ -390,11 +393,35 @@ def select_files(
             # Help popup handling
             if key == ord('h') or key == ord('H') or key == ord('?'):
                 show_help = not show_help
+                show_configs = False  # Close configs if open
+                continue
+
+            # Configs popup handling
+            if key == ord('m') or key == ord('M'):
+                show_configs = not show_configs
+                show_help = False  # Close help if open
                 continue
 
             # If help is shown, any other key closes it
             if show_help:
                 show_help = False
+                continue
+
+            # If configs popup is shown, handle it separately
+            if show_configs:
+                # Handle configs popup interactions
+                result = _handle_configs_input(stdscr, key, directory, has_color, selected_paths, compressed_paths)
+                if result == "close":
+                    show_configs = False
+                elif result and isinstance(result, tuple):
+                    # Load a configuration
+                    loaded_selected, loaded_compressed = result
+                    # Update current selection
+                    selected_paths.clear()
+                    compressed_paths.clear()
+                    selected_paths.update(str(Path(p).resolve()) for p in loaded_selected)
+                    compressed_paths.update(str(Path(p).resolve()) for p in loaded_compressed)
+                    show_configs = False
                 continue
 
             if key == ord('q') or key == 27: # Quit
@@ -636,6 +663,9 @@ def select_files(
             "║   E             Expand all folders (recursive)            ║",
             "║   C             Collapse child folders (recursive)        ║",
             "║                                                           ║",
+            "║ Configurations:                                           ║",
+            "║   M             Manage selection configurations (CRUD)    ║",
+            "║                                                           ║",
             "║ Mouse Support:                                            ║",
             "║   Click         Select item and toggle selection          ║",
             "║   Scroll        Scroll up/down through items              ║",
@@ -648,7 +678,7 @@ def select_files(
             "║ Tips:                                                     ║",
             "║   • [X] = Selected (gold), [★] = Compressed (magenta)    ║",
             "║   • Compressed files are auto-selected                    ║",
-            "║   • F/E/C work on files' parent folders too               ║",
+            "║   • Save/load configurations with M key                   ║",
             "║   • Token counts shown for individual files               ║",
             "╚═══════════════════════════════════════════════════════════╝",
             "",
@@ -687,6 +717,235 @@ def select_files(
             pass  # Ignore errors if terminal is too small
 
         stdscr.refresh()
+
+    # --- Draw Configs Popup Helper (Inner Function) ---
+    def _draw_configs_popup(stdscr, has_color, base_dir):
+        """Draw a popup for managing selection configurations."""
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+
+        configs = summary_utils.read_selection_configs(base_dir)
+        config_names = sorted(configs.keys())
+
+        help_content = [
+            "╔═══════════════════════════════════════════════════════════╗",
+            "║              SELECTION CONFIGURATIONS                     ║",
+            "╠═══════════════════════════════════════════════════════════╣",
+            "",
+            "Saved Configurations:",
+            ""
+        ]
+
+        if config_names:
+            for i, name in enumerate(config_names, 1):
+                config = configs[name]
+                num_files = len(config.get("selected_files", []))
+                num_compressed = len(config.get("compressed_files", []))
+                help_content.append(f"  {i}. {name} ({num_files} files, {num_compressed} compressed)")
+        else:
+            help_content.append("  (No saved configurations)")
+
+        help_content.extend([
+            "",
+            "╠═══════════════════════════════════════════════════════════╣",
+            "║ Actions:                                                  ║",
+            "║   S             Save current selection (prompts for name) ║",
+            "║   L             Load configuration (enter number)         ║",
+            "║   R             Rename configuration (enter number)       ║",
+            "║   D             Delete configuration (enter number)       ║",
+            "║   ESC/M         Close this menu                           ║",
+            "╚═══════════════════════════════════════════════════════════╝",
+            "",
+            "Press a key to perform an action..."
+        ])
+
+        # Calculate popup dimensions
+        popup_height = len(help_content)
+        popup_width = max(len(line) for line in help_content)
+
+        # Center the popup
+        start_y = max(0, (h - popup_height) // 2)
+        start_x = max(0, (w - popup_width) // 2)
+
+        # Draw the popup
+        try:
+            for i, line in enumerate(help_content):
+                y = start_y + i
+                if y < h:
+                    # Truncate line if it doesn't fit
+                    display_line = line[:w-1] if start_x == 0 else line
+                    if has_color:
+                        # Use highlight color for the header
+                        if i == 1:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)],
+                                        curses.color_pair(COLOR_PAIR_HIGHLIGHT) | curses.A_BOLD)
+                        else:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)])
+                    else:
+                        if i == 1:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)],
+                                        curses.A_REVERSE | curses.A_BOLD)
+                        else:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)])
+        except curses.error:
+            pass  # Ignore errors if terminal is too small
+
+        stdscr.refresh()
+
+    def _handle_configs_input(stdscr, key, base_dir, has_color, selected_paths, compressed_paths):
+        """Handle keyboard input in the configs popup. Returns 'close', tuple of (selected, compressed), or None."""
+        configs = summary_utils.read_selection_configs(base_dir)
+        config_names = sorted(configs.keys())
+
+        # Close on ESC or M
+        if key == 27 or key == ord('m') or key == ord('M'):
+            return "close"
+
+        # Save current selection
+        elif key == ord('s') or key == ord('S'):
+            stdscr.timeout(-1)  # Disable timeout - wait indefinitely for input
+            curses.echo()
+            curses.curs_set(1)
+            try:
+                h, w = stdscr.getmaxyx()
+                # Clear the bottom area
+                stdscr.addstr(h-2, 0, " " * (w-1))
+                stdscr.addstr(h-1, 0, " " * (w-1))
+                stdscr.addstr(h-2, 0, "Enter configuration name: ")
+                stdscr.refresh()
+                name = stdscr.getstr(h-2, 26, 50).decode('utf-8').strip()
+                if name:
+                    summary_utils.save_selection_config(name, sorted(list(selected_paths)), sorted(list(compressed_paths)), base_dir)
+                    stdscr.addstr(h-1, 0, f"Saved configuration '{name}'! Press any key...")
+                    stdscr.refresh()
+                    stdscr.timeout(-1)
+                    stdscr.getch()  # Wait for keypress
+            except Exception as e:
+                # Show error message
+                try:
+                    stdscr.addstr(h-1, 0, f"Error: {str(e)}. Press any key...")
+                    stdscr.refresh()
+                    stdscr.timeout(-1)
+                    stdscr.getch()
+                except:
+                    pass
+            finally:
+                curses.noecho()
+                curses.curs_set(0)
+                stdscr.timeout(50)  # Re-enable timeout
+            return None
+
+        # Load configuration
+        elif key == ord('l') or key == ord('L'):
+            if not config_names:
+                return None
+            stdscr.timeout(-1)  # Disable timeout
+            curses.echo()
+            curses.curs_set(1)
+            try:
+                h, w = stdscr.getmaxyx()
+                stdscr.addstr(h-2, 0, " " * (w-1))
+                stdscr.addstr(h-1, 0, " " * (w-1))
+                stdscr.addstr(h-2, 0, f"Enter config number (1-{len(config_names)}): ")
+                stdscr.refresh()
+                num_str = stdscr.getstr(h-2, 40, 10).decode('utf-8').strip()
+                if num_str.isdigit():
+                    num = int(num_str)
+                    if 1 <= num <= len(config_names):
+                        config_name = config_names[num - 1]
+                        result = summary_utils.load_selection_config(config_name, base_dir)
+                        if result:
+                            stdscr.timeout(50)  # Re-enable timeout
+                            return result
+            except Exception as e:
+                try:
+                    stdscr.addstr(h-1, 0, f"Error: {str(e)}. Press any key...")
+                    stdscr.refresh()
+                    stdscr.getch()
+                except:
+                    pass
+            finally:
+                curses.noecho()
+                curses.curs_set(0)
+                stdscr.timeout(50)  # Re-enable timeout
+            return None
+
+        # Delete configuration
+        elif key == ord('d') or key == ord('D'):
+            if not config_names:
+                return None
+            stdscr.timeout(-1)  # Disable timeout
+            curses.echo()
+            curses.curs_set(1)
+            try:
+                h, w = stdscr.getmaxyx()
+                stdscr.addstr(h-2, 0, " " * (w-1))
+                stdscr.addstr(h-1, 0, " " * (w-1))
+                stdscr.addstr(h-2, 0, f"Enter config number to delete (1-{len(config_names)}): ")
+                stdscr.refresh()
+                num_str = stdscr.getstr(h-2, 50, 10).decode('utf-8').strip()
+                if num_str.isdigit():
+                    num = int(num_str)
+                    if 1 <= num <= len(config_names):
+                        config_name = config_names[num - 1]
+                        summary_utils.delete_selection_config(config_name, base_dir)
+                        stdscr.addstr(h-1, 0, f"Deleted configuration '{config_name}'! Press any key...")
+                        stdscr.refresh()
+                        stdscr.getch()
+            except Exception as e:
+                try:
+                    stdscr.addstr(h-1, 0, f"Error: {str(e)}. Press any key...")
+                    stdscr.refresh()
+                    stdscr.getch()
+                except:
+                    pass
+            finally:
+                curses.noecho()
+                curses.curs_set(0)
+                stdscr.timeout(50)  # Re-enable timeout
+            return None
+
+        # Rename configuration
+        elif key == ord('r') or key == ord('R'):
+            if not config_names:
+                return None
+            stdscr.timeout(-1)  # Disable timeout
+            curses.echo()
+            curses.curs_set(1)
+            try:
+                h, w = stdscr.getmaxyx()
+                stdscr.addstr(h-3, 0, " " * (w-1))
+                stdscr.addstr(h-2, 0, " " * (w-1))
+                stdscr.addstr(h-1, 0, " " * (w-1))
+                stdscr.addstr(h-3, 0, f"Enter config number to rename (1-{len(config_names)}): ")
+                stdscr.refresh()
+                num_str = stdscr.getstr(h-3, 50, 10).decode('utf-8').strip()
+                if num_str.isdigit():
+                    num = int(num_str)
+                    if 1 <= num <= len(config_names):
+                        old_name = config_names[num - 1]
+                        stdscr.addstr(h-2, 0, f"Enter new name for '{old_name}': ")
+                        stdscr.refresh()
+                        new_name = stdscr.getstr(h-2, 30 + len(old_name), 50).decode('utf-8').strip()
+                        if new_name:
+                            if summary_utils.rename_selection_config(old_name, new_name, base_dir):
+                                stdscr.addstr(h-1, 0, f"Renamed '{old_name}' to '{new_name}'! Press any key...")
+                                stdscr.refresh()
+                                stdscr.getch()
+            except Exception as e:
+                try:
+                    stdscr.addstr(h-1, 0, f"Error: {str(e)}. Press any key...")
+                    stdscr.refresh()
+                    stdscr.getch()
+                except:
+                    pass
+            finally:
+                curses.noecho()
+                curses.curs_set(0)
+                stdscr.timeout(50)  # Re-enable timeout
+            return None
+
+        return None
 
     # --- Draw Menu Helper (Inner Function) ---
     def _draw_menu(stdscr, options, selected_paths, compressed_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens):

@@ -17,6 +17,7 @@ COMPRESSED_SUMMARY_FILENAME = "compressed_code_summary.md"
 SELECTION_FILENAME = "previous_selection.json"
 COLLAPSED_FOLDERS_FILENAME = "collapsed_folders.json"
 METADATA_SUFFIX = "_metadata.json"
+SELECTION_CONFIGS_FILENAME = "selection_configs.json"
 
 def get_summary_dir(base_dir: Path = Path('.')) -> Path:
     """Gets the path to the summary directory within the base directory."""
@@ -373,3 +374,81 @@ def write_previous_collapsed_folders(collapsed_folders: list[str], base_dir: Pat
         print(f"Error writing collapsed folders file {collapsed_folders_file}: {e}", file=sys.stderr)
     except TypeError as e:
         print(f"Error serializing collapsed folders data to JSON: {e}", file=sys.stderr)
+
+
+# --- Selection Configuration Management ---
+
+def read_selection_configs(base_dir: Path = Path('.')) -> dict:
+    """Reads saved selection configurations from JSON."""
+    configs_file = get_summary_dir(base_dir) / SELECTION_CONFIGS_FILENAME
+    if configs_file.exists():
+        try:
+            with open(configs_file, "r", encoding='utf-8') as f:
+                configs = json.load(f)
+            if isinstance(configs, dict):
+                return configs
+            else:
+                print(f"Warning: Invalid format in {configs_file}. Ignoring.", file=sys.stderr)
+                return {}
+        except json.JSONDecodeError:
+            print(f"Warning: Could not decode {configs_file}. Ignoring.", file=sys.stderr)
+            return {}
+        except IOError as e:
+            print(f"Warning: Could not read {configs_file}: {e}. Ignoring.", file=sys.stderr)
+            return {}
+    else:
+        return {}
+
+
+def write_selection_configs(configs: dict, base_dir: Path = Path('.')):
+    """Writes selection configurations to JSON."""
+    configs_file = get_summary_dir(base_dir) / SELECTION_CONFIGS_FILENAME
+    try:
+        with open(configs_file, "w", encoding='utf-8') as f:
+            json.dump(configs, f, indent=2)
+    except IOError as e:
+        print(f"Warning: Could not write to {configs_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing configs to JSON: {e}", file=sys.stderr)
+
+
+def save_selection_config(name: str, selected_files: list[str], compressed_files: list[str], base_dir: Path = Path('.')):
+    """Saves a named selection configuration."""
+    configs = read_selection_configs(base_dir)
+    configs[name] = {
+        "selected_files": selected_files,
+        "compressed_files": compressed_files
+    }
+    write_selection_configs(configs, base_dir)
+
+
+def load_selection_config(name: str, base_dir: Path = Path('.')) -> tuple[list[str], list[str]] | None:
+    """Loads a named selection configuration. Returns (selected_files, compressed_files) or None."""
+    configs = read_selection_configs(base_dir)
+    if name in configs:
+        config = configs[name]
+        selected = config.get("selected_files", [])
+        compressed = config.get("compressed_files", [])
+        return (selected, compressed)
+    return None
+
+
+def delete_selection_config(name: str, base_dir: Path = Path('.')):
+    """Deletes a named selection configuration."""
+    configs = read_selection_configs(base_dir)
+    if name in configs:
+        del configs[name]
+        write_selection_configs(configs, base_dir)
+        return True
+    return False
+
+
+def rename_selection_config(old_name: str, new_name: str, base_dir: Path = Path('.')):
+    """Renames a selection configuration."""
+    configs = read_selection_configs(base_dir)
+    if old_name in configs and new_name not in configs:
+        configs[new_name] = configs[old_name]
+        del configs[old_name]
+        write_selection_configs(configs, base_dir)
+        return True
+    return False
