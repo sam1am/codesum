@@ -195,6 +195,7 @@ def select_files(
         current_page = 0
         current_pos = 0
         has_color = False # Determined after curses init
+        show_help = False  # Track whether help popup is visible
         
         # Calculate total token count for selected files
         def _calculate_total_tokens():
@@ -257,7 +258,10 @@ def select_files(
 
             # --- Draw Menu ---
             total_tokens = _calculate_total_tokens()
-            _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
+            if show_help:
+                _draw_help_popup(stdscr, has_color)
+            else:
+                _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
 
             # --- Get Key ---
             try:
@@ -269,6 +273,16 @@ def select_files(
             current_abs_index = current_page * page_size + current_pos
             total_options = len(options)
             total_pages = (total_options + page_size - 1) // page_size if page_size > 0 else 1
+
+            # Help popup handling
+            if key == ord('h') or key == ord('H') or key == ord('?'):
+                show_help = not show_help
+                continue
+
+            # If help is shown, any other key closes it
+            if show_help:
+                show_help = False
+                continue
 
             if key == ord('q') or key == 27: # Quit
                 # Save collapsed folder states before quitting
@@ -323,21 +337,74 @@ def select_files(
             elif key == ord('f') or key == ord('F'):  # Toggle folder selection
                 if 0 <= current_abs_index < total_options:
                     display_name, path, is_folder, full_path = options[current_abs_index]
+
+                    # Determine the folder to work with
+                    target_folder_path = None
                     if is_folder:
-                        # Get all files in this folder
-                        folder_files = folder_utils.collect_files_in_folder(path, tree_ref)
+                        target_folder_path = path
+                    else:
+                        # File is selected, find its parent folder
+                        target_folder_path = folder_utils.find_parent_folder_path(path, options)
+
+                    if target_folder_path:
+                        # Get all files in the target folder
+                        folder_files = folder_utils.collect_files_in_folder(target_folder_path, tree_ref)
                         # Convert to resolved paths for comparison
                         resolved_folder_files = set(str(Path(f).resolve()) for f in folder_files)
-                        
+
                         # Check if all files in folder are currently selected
                         all_selected = resolved_folder_files.issubset(selected_paths)
-                        
+
                         if all_selected:
                             # Deselect all files in folder
                             selected_paths.difference_update(resolved_folder_files)
                         else:
                             # Select all files in folder
                             selected_paths.update(resolved_folder_files)
+
+            elif key == ord('e') or key == ord('E'):  # Expand all folders recursively
+                if 0 <= current_abs_index < total_options:
+                    display_name, path, is_folder, full_path = options[current_abs_index]
+
+                    # Determine the folder to work with
+                    target_folder_path = None
+                    if is_folder:
+                        target_folder_path = path
+                    else:
+                        # File is selected, find its parent folder
+                        target_folder_path = folder_utils.find_parent_folder_path(path, options)
+
+                    if target_folder_path:
+                        # Get all subfolders within the target folder
+                        all_subfolders = folder_utils.collect_all_subfolders(target_folder_path, tree_ref)
+                        # Remove all these folders from collapsed_folders to expand them
+                        for subfolder in all_subfolders:
+                            collapsed_folders.discard(subfolder)
+                        # Rebuild options with new collapsed state
+                        flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
+                        options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
+
+            elif key == ord('c') or key == ord('C'):  # Collapse all folders recursively
+                if 0 <= current_abs_index < total_options:
+                    display_name, path, is_folder, full_path = options[current_abs_index]
+
+                    # Determine the folder to work with
+                    target_folder_path = None
+                    if is_folder:
+                        target_folder_path = path
+                    else:
+                        # File is selected, find its parent folder
+                        target_folder_path = folder_utils.find_parent_folder_path(path, options)
+
+                    if target_folder_path:
+                        # Get all subfolders within the target folder
+                        all_subfolders = folder_utils.collect_all_subfolders(target_folder_path, tree_ref)
+                        # Add all these folders to collapsed_folders to collapse them
+                        for subfolder in all_subfolders:
+                            collapsed_folders.add(subfolder)
+                        # Rebuild options with new collapsed state
+                        flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
+                        options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
 
             elif key == curses.KEY_UP:
                 if current_pos > 0:
@@ -407,6 +474,77 @@ def select_files(
         # Return the set of selected paths (or None if cancelled)
         return selected_paths
 
+    # --- Draw Help Popup Helper (Inner Function) ---
+    def _draw_help_popup(stdscr, has_color):
+        """Draw a centered help popup with all keyboard shortcuts."""
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+
+        help_content = [
+            "╔═══════════════════════════════════════════════════════════╗",
+            "║                   KEYBOARD SHORTCUTS                      ║",
+            "╠═══════════════════════════════════════════════════════════╣",
+            "║ Navigation:                                               ║",
+            "║   ↑/↓           Move up/down                              ║",
+            "║   ←/→           Page left/right                           ║",
+            "║   PgUp/PgDn     Page up/down                              ║",
+            "║   N/P           Jump to next/previous folder              ║",
+            "║                                                           ║",
+            "║ Selection:                                                ║",
+            "║   SPACE         Toggle file/folder selection              ║",
+            "║   F             Toggle all files in current folder        ║",
+            "║   A             Select/deselect all files                 ║",
+            "║   E             Expand all folders (recursive)            ║",
+            "║   C             Collapse all folders (recursive)          ║",
+            "║                                                           ║",
+            "║ Actions:                                                  ║",
+            "║   ENTER         Confirm selection                         ║",
+            "║   Q/ESC         Quit without saving                       ║",
+            "║   H/?           Show this help                            ║",
+            "║                                                           ║",
+            "║ Tips:                                                     ║",
+            "║   • SPACE on folder expands/collapses it                  ║",
+            "║   • F works on files and their parent folders             ║",
+            "║   • Token counts shown for individual files               ║",
+            "║   • Total tokens shown in header                          ║",
+            "╚═══════════════════════════════════════════════════════════╝",
+            "",
+            "Press any key to close this help..."
+        ]
+
+        # Calculate popup dimensions
+        popup_height = len(help_content)
+        popup_width = max(len(line) for line in help_content)
+
+        # Center the popup
+        start_y = max(0, (h - popup_height) // 2)
+        start_x = max(0, (w - popup_width) // 2)
+
+        # Draw the popup
+        try:
+            for i, line in enumerate(help_content):
+                y = start_y + i
+                if y < h:
+                    # Truncate line if it doesn't fit
+                    display_line = line[:w-1] if start_x == 0 else line
+                    if has_color:
+                        # Use highlight color for the header
+                        if i == 1:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)],
+                                        curses.color_pair(COLOR_PAIR_HIGHLIGHT) | curses.A_BOLD)
+                        else:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)])
+                    else:
+                        if i == 1:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)],
+                                        curses.A_REVERSE | curses.A_BOLD)
+                        else:
+                            stdscr.addstr(y, start_x, display_line[:min(len(display_line), w-start_x-1)])
+        except curses.error:
+            pass  # Ignore errors if terminal is too small
+
+        stdscr.refresh()
+
     # --- Draw Menu Helper (Inner Function) ---
     def _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens):
         stdscr.clear()
@@ -425,12 +563,12 @@ def select_files(
         title_base = "CodeSum"
         token_info = f"Tokens: {_format_token_count(total_tokens)}"
 
-        # Adaptive instructions based on width
-        if w >= 120:
-            instructions = "[SPACE] Toggle | [F] Folder | [A] All | [N/P] Next/Prev Folder | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+        # Adaptive instructions based on width - simplified to show basic functionality
+        if w >= 80:
+            instructions = "[SPACE] Select | [↑↓] Navigate | [ENTER] Confirm | [H/?] Help | [Q] Quit"
             title = f"{title_base} - {directory_path}"
-        elif w >= 80:
-            instructions = "[SPC] Toggle | [F] Folder | [A] All | [N/P] Folders | [Enter] OK | [↑↓] Nav | [Q] Quit"
+        elif w >= 60:
+            instructions = "[SPC] Select | [↑↓] Nav | [Enter] OK | [H] Help | [Q] Quit"
             # Truncate directory path if needed
             max_path_len = w - len(title_base) - 4
             if len(directory_path) > max_path_len:
@@ -438,7 +576,7 @@ def select_files(
             else:
                 title = f"{title_base} - {directory_path}"
         else:  # w >= 20 (minimum)
-            instructions = "[SPC] Sel [F] Fold [N/P] Fld [A] All [Q] Quit"
+            instructions = "[SPC] Sel [H] Help [Q] Quit"
             title = title_base
 
         try:
