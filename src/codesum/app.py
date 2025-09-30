@@ -95,24 +95,8 @@ def main():
         print("No files selected or selection cancelled. Exiting.")
         return
 
-    print("\nSelected files:")
-    # Make sure selected_files contains strings before processing
-    if selected_files and isinstance(selected_files[0], str):
-        for f_abs_str in selected_files:
-            f_path = Path(f_abs_str)
-            try:
-                 # Display relative path for clarity
-                 print(f"- {f_path.relative_to(base_dir).as_posix()}")
-            except ValueError:
-                 print(f"- {f_path}") # Fallback if not relative
-    else:
-        print("Error: Invalid selection data received from TUI.", file=sys.stderr)
-        return # Exit if selection data is bad
-
-
     # 6. Save Current Selection (absolute paths)
     summary_utils.write_previous_selection(selected_files, base_dir)
-    print(f"\nSelection saved to '{summary_utils.SUMMARY_DIR_NAME}/{summary_utils.SELECTION_FILENAME}'.")
 
     # 7. Create Local Code Summary (Full Content, with compressed summaries for marked files)
     # Initialize OpenAI client if needed for compressed summaries
@@ -142,26 +126,87 @@ def main():
                 print("Compressed summaries will be skipped.")
                 compressed_files = []
 
+    print("\n\033[36m⚙ Generating code summary...\033[0m")
     summary_utils.create_code_summary(selected_files, base_dir, compressed_files, openai_client, llm_model)
     local_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.CODE_SUMMARY_FILENAME
+
+    # Count tokens
+    token_count = 0
     if local_summary_path.exists():
-        print(f"Local code summary (full content) created in '{local_summary_path}'.")
         try:
             with open(local_summary_path, "r", encoding='utf-8') as f:
                 content = f.read()
             token_count = openai_utils.count_tokens(content)
-            if token_count >= 0: # Check for valid count
-                print(f"Tokens in '{summary_utils.CODE_SUMMARY_FILENAME}': {token_count}")
         except Exception as e:
-            print(f"Error counting tokens for {local_summary_path}: {e}", file=sys.stderr)
-    else:
-        print(f"Local code summary file not found at '{local_summary_path}'.", file=sys.stderr)
+            print(f"\033[33m⚠ Error counting tokens: {e}\033[0m", file=sys.stderr)
 
     # 8. Copy to Clipboard automatically
-    print("\nCopying code_summary.md to clipboard...")
     summary_utils.copy_summary_to_clipboard(base_dir)
 
-    print("\nProcess finished. Code summary copied to clipboard!")
+    # Print cool ASCII art logo with stats
+    # Box width is 75 chars (including ║ on each side)
+    BOX_WIDTH = 75
+    CONTENT_WIDTH = BOX_WIDTH - 4  # Subtract 4 for "║  " and "  ║"
+
+    print("\n\033[36m")
+    print("╔═════════════════════════════════════════════════════════════════════════╗")
+    print("║                                                                         ║")
+    print("║   ██████╗ ██████╗ ██████╗ ███████╗███████╗██╗   ██╗███╗   ███╗          ║")
+    print("║  ██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██║   ██║████╗ ████║          ║")
+    print("║  ██║     ██║   ██║██║  ██║█████╗  ███████╗██║   ██║██╔████╔██║          ║")
+    print("║  ██║     ██║   ██║██║  ██║██╔══╝  ╚════██║██║   ██║██║╚██╔╝██║          ║")
+    print("║  ╚██████╗╚██████╔╝██████╔╝███████╗███████║╚██████╔╝██║ ╚═╝ ██║          ║")
+    print("║   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝ ╚═════╝ ╚═╝     ╚═╝          ║")
+    print("║                                                                         ║")
+
+    # Success message line
+    success_msg = "✓ Code summary copied to clipboard!"
+    padding = " " * (CONTENT_WIDTH - len(success_msg))
+    print(f"║  \033[0m\033[32m{success_msg}\033[0m\033[36m{padding}║")
+    print("║                                                                         ║")
+    print("╠═════════════════════════════════════════════════════════════════════════╣")
+
+    # Stats section
+    files_line = f"Selected Files: {len(selected_files)}"
+    padding = " " * (CONTENT_WIDTH - len(files_line))
+    print(f"║  \033[0m\033[1m{files_line}\033[0m\033[36m{padding}║")
+
+    if compressed_files:
+        comp_line = f"Compressed Summaries: {len(compressed_files)}"
+        padding = " " * (CONTENT_WIDTH - len(comp_line))
+        print(f"║  \033[0m\033[1m{comp_line}\033[0m\033[36m{padding}║")
+
+    token_str = f"{token_count:,}" if token_count > 0 else "0"
+    tokens_line = f"Total Tokens: {token_str}"
+    padding = " " * (CONTENT_WIDTH - len(tokens_line))
+    print(f"║  \033[0m\033[1m{tokens_line}\033[0m\033[36m{padding}║")
+    print("║                                                                         ║")
+
+    # Show all files
+    files_header = "Files:"
+    padding = " " * (CONTENT_WIDTH - len(files_header))
+    print(f"║  \033[0m\033[1m{files_header}\033[0m\033[36m{padding}║")
+
+    for f_abs_str in selected_files:
+        f_path = Path(f_abs_str)
+        try:
+            rel_path = f_path.relative_to(base_dir).as_posix()
+        except ValueError:
+            rel_path = f_path.name
+
+        # Truncate if too long (max 67 chars for path + marker and space)
+        if len(rel_path) > 67:
+            rel_path = "..." + rel_path[-64:]
+
+        # Mark compressed files with star
+        marker = "★" if f_abs_str in compressed_files else "•"
+        file_line = f"{marker} {rel_path}"
+        padding = " " * (CONTENT_WIDTH - len(file_line))
+        print(f"║  \033[0m{file_line}\033[36m{padding}║")
+
+    print("║                                                                         ║")
+    print("╚═════════════════════════════════════════════════════════════════════════╝")
+    print("\033[0m")
 
 
 if __name__ == "__main__":
