@@ -1,0 +1,31 @@
+{
+  "TUI related": {
+    "selected_files": [
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/app.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/config.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/file_utils.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/folder_utils.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/openai_utils.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/tui.py"
+    ],
+    "compressed_files": []
+  },
+  "LLM related generators": {
+    "selected_files": [
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/prompts/system_summary.md",
+      "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py"
+    ],
+    "compressed_files": []
+  },
+  "compressed test": {
+    "selected_files": [
+      "/Users/johngarfield/Documents/GitHub/codesum/release.sh",
+      "/Users/johngarfield/Documents/GitHub/codesum/test_mcp_server.py"
+    ],
+    "compressed_files": [
+      "/Users/johngarfield/Documents/GitHub/codesum/release.sh",
+      "/Users/johngarfield/Documents/GitHub/codesum/test_mcp_server.py"
+    ]
+  }
+}
