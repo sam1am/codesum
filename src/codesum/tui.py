@@ -199,6 +199,12 @@ def select_files(
         show_help = False  # Track whether help popup is visible
         interrupted = False  # Track if Ctrl+C was pressed
 
+        # Enable mouse support
+        try:
+            curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+        except:
+            pass  # Mouse support not available, continue without it
+
         # Set up signal handler for Ctrl+C
         def signal_handler(signum, frame):
             nonlocal interrupted
@@ -282,7 +288,7 @@ def select_files(
 
             # --- Get Key ---
             try:
-                 stdscr.timeout(100)  # Check for key every 100ms
+                 stdscr.timeout(50)  # Reduced from 100ms to 50ms for better responsiveness
                  key = stdscr.getch()
                  if key == -1:  # No key pressed
                      continue
@@ -294,6 +300,83 @@ def select_files(
             current_abs_index = current_page * page_size + current_pos
             total_options = len(options)
             total_pages = (total_options + page_size - 1) // page_size if page_size > 0 else 1
+
+            # Handle mouse events
+            if key == curses.KEY_MOUSE:
+                try:
+                    _, mx, my, _, bstate = curses.getmouse()
+
+                    # Debug: Uncomment to see mouse events
+                    # stdscr.addstr(0, 0, f"Mouse: bstate={hex(bstate)} my={my} mx={mx}"[:w-1])
+                    # stdscr.refresh()
+
+                    # Calculate which line was clicked
+                    # Determine header offset
+                    if w >= 40 and len(f"CodeSum - {directory_path}") + len(f"Tokens: {_format_token_count(total_tokens)}") + 3 <= w:
+                        header_offset = 3
+                    elif w >= 30:
+                        header_offset = 4
+                    else:
+                        header_offset = 3
+
+                    # Handle scroll wheel events (anywhere on screen)
+                    # Scroll wheel up (BUTTON4)
+                    if bstate & curses.BUTTON4_PRESSED:
+                        if current_pos > 0:
+                            current_pos -= 1
+                        elif current_page > 0:
+                            current_page -= 1
+                            h_new, _ = stdscr.getmaxyx()
+                            page_size_new = max(1, h_new - header_offset - 1)
+                            items_on_prev_page = min(page_size_new, total_options - current_page * page_size_new)
+                            current_pos = items_on_prev_page - 1 if items_on_prev_page > 0 else 0
+
+                    # Scroll wheel down - try multiple button codes for compatibility
+                    # 0x200000 = BUTTON5_PRESSED on most systems
+                    # 0x8000000 = alternative encoding on some terminals
+                    elif bstate & 0x200000 or bstate & 0x8000000 or (hasattr(curses, 'BUTTON5_PRESSED') and bstate & curses.BUTTON5_PRESSED):
+                        if current_pos < max_pos_on_page:
+                            current_pos += 1
+                        elif current_page < total_pages - 1:
+                            current_page += 1
+                            current_pos = 0
+
+                    # Check if click was in the content area (below headers)
+                    elif my >= header_offset:
+                        clicked_idx = my - header_offset
+
+                        # Check if click is within current page items
+                        if 0 <= clicked_idx < items_on_current_page:
+                            # Left click - select item
+                            if bstate & curses.BUTTON1_CLICKED:
+                                # Move cursor to clicked item
+                                current_pos = clicked_idx
+
+                                # Get the item details
+                                clicked_abs_index = current_page * page_size + clicked_idx
+                                if 0 <= clicked_abs_index < total_options:
+                                    display_name, path, is_folder, full_path = options[clicked_abs_index]
+
+                                    if is_folder:
+                                        # Toggle folder collapse
+                                        if path in collapsed_folders:
+                                            collapsed_folders.discard(path)
+                                        else:
+                                            collapsed_folders.add(path)
+                                        # Rebuild options
+                                        flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
+                                        options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
+                                    else:
+                                        # Toggle file selection
+                                        resolved_path = str(Path(full_path).resolve())
+                                        if resolved_path in selected_paths:
+                                            selected_paths.remove(resolved_path)
+                                        else:
+                                            selected_paths.add(resolved_path)
+
+                    continue
+                except:
+                    pass  # Ignore mouse errors
 
             # Help popup handling
             if key == ord('h') or key == ord('H') or key == ord('?'):
@@ -521,17 +604,20 @@ def select_files(
             "║   E             Expand all folders (recursive)            ║",
             "║   C             Collapse child folders (recursive)        ║",
             "║                                                           ║",
+            "║ Mouse Support:                                            ║",
+            "║   Click         Select item and toggle selection          ║",
+            "║   Scroll        Scroll up/down through items              ║",
+            "║                                                           ║",
             "║ Actions:                                                  ║",
             "║   ENTER         Confirm selection                         ║",
             "║   Q/ESC         Quit without saving                       ║",
             "║   H/?           Show this help                            ║",
             "║                                                           ║",
             "║ Tips:                                                     ║",
-            "║   • SPACE on folder expands/collapses it                  ║",
+            "║   • Click on items to select them                         ║",
             "║   • F/E/C work on files' parent folders too               ║",
             "║   • C collapses children but not current folder           ║",
             "║   • Token counts shown for individual files               ║",
-            "║   • Total tokens shown in header                          ║",
             "╚═══════════════════════════════════════════════════════════╝",
             "",
             "Press any key to close this help..."
