@@ -235,16 +235,16 @@ def select_files(
 
         while True:
             h, w = stdscr.getmaxyx()
-            # Ensure minimum screen size (optional)
-            # if h < 5 or w < 20:
-            #     stdscr.clear()
-            #     stdscr.addstr(0, 0, "Terminal too small!")
-            #     stdscr.refresh()
-            #     key = stdscr.getch()
-            #     if key == ord('q') or key == 27: break # Allow quitting
-            #     continue
 
-            page_size = max(1, h - 4) # Rows available for options
+            # Calculate header lines based on width
+            if w >= 40:
+                header_lines = 3  # Typical case
+            elif w >= 30:
+                header_lines = 4  # Token info on separate line
+            else:
+                header_lines = 3  # Minimal mode
+
+            page_size = max(1, h - header_lines - 1) # Rows available for options
 
             items_on_current_page = min(page_size, len(options) - current_page * page_size)
             max_pos_on_page = items_on_current_page - 1 if items_on_current_page > 0 else 0
@@ -386,35 +386,72 @@ def select_files(
         stdscr.clear()
         h, w = stdscr.getmaxyx()
 
-        # Instructions
-        title = f"CodeSum File Selection - {directory_path}"
-        token_info = f"Total Selected Tokens: {_format_token_count(total_tokens)}"
-        instructions = "[SPACE] Toggle/File Collapse | [F] Select/Deselect Folder | [A] Select/Deselect All Files | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
-        try:
-            stdscr.addstr(0, 0, title.ljust(w-1))
-            # Show token count right-aligned on the same line as title if there's space
-            if len(title) + len(token_info) + 3 <= w:
-                stdscr.addstr(0, w - len(token_info), token_info)
+        # Enforce minimum width
+        MIN_WIDTH = 20
+        if w < MIN_WIDTH:
+            try:
+                stdscr.addstr(0, 0, "Window too narrow!")[:w-1]
+                stdscr.addstr(1, 0, "Please resize.")[:w-1]
+            except curses.error: pass
+            return
+
+        # Instructions - adapt based on width
+        title_base = "CodeSum"
+        token_info = f"Tokens: {_format_token_count(total_tokens)}"
+
+        # Adaptive instructions based on width
+        if w >= 120:
+            instructions = "[SPACE] Toggle | [F] Folder | [A] All | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+            title = f"{title_base} - {directory_path}"
+        elif w >= 80:
+            instructions = "[SPC] Toggle | [F] Folder | [A] All | [Enter] OK | [↑↓] Nav | [Q] Quit"
+            # Truncate directory path if needed
+            max_path_len = w - len(title_base) - 4
+            if len(directory_path) > max_path_len:
+                title = f"{title_base} - ...{directory_path[-(max_path_len-3):]}"
             else:
-                # If not enough space, show on separate line
-                stdscr.addstr(1, 0, token_info.ljust(w-1))
-                stdscr.addstr(2, 0, instructions.ljust(w-1))
-                stdscr.addstr(3, 0, "-" * (w - 1))
-                # Adjust y positions for file list later
-                return
-            
-            stdscr.addstr(1, 0, instructions.ljust(w-1))
-            stdscr.addstr(2, 0, "-" * (w - 1))
-        except curses.error: pass # Ignore errors if window too small
+                title = f"{title_base} - {directory_path}"
+        else:  # w >= 20 (minimum)
+            instructions = "[SPC] Sel [F] Fold [A] All [Q] Quit"
+            title = title_base
+
+        try:
+            # Draw title
+            stdscr.addstr(0, 0, title[:w-1].ljust(min(len(title), w-1)))
+
+            # Show token count right-aligned if there's space (at least 40 chars total)
+            if w >= 40 and len(title) + len(token_info) + 3 <= w:
+                stdscr.addstr(0, w - len(token_info) - 1, token_info)
+            elif w >= 30:
+                # Show token info on separate line if space allows
+                stdscr.addstr(1, 0, token_info[:w-1].ljust(min(len(token_info), w-1)))
+
+            # Draw instructions (will be on line 1 or 2 depending on token info placement)
+            instr_line = 1 if w >= 40 and len(title) + len(token_info) + 3 <= w else 2 if w >= 30 else 1
+            stdscr.addstr(instr_line, 0, instructions[:w-1].ljust(min(len(instructions), w-1)))
+
+            # Draw separator
+            sep_line = instr_line + 1
+            stdscr.addstr(sep_line, 0, "-" * (w - 1))
+        except curses.error:
+            pass  # Ignore errors if window too small
 
         # Calculate display slice
         start_idx = current_page * page_size
         end_idx = min(start_idx + page_size, len(options))
         current_options_page = options[start_idx:end_idx]
 
+        # Calculate header offset based on width
+        if w >= 40 and len(title) + len(token_info) + 3 <= w:
+            header_lines = 3  # title/token on same line, instructions, separator
+        elif w >= 30:
+            header_lines = 4  # title, token, instructions, separator
+        else:
+            header_lines = 3  # title, instructions, separator
+
         # Display file/folder list
         for idx, (display_name, path, is_folder, full_path) in enumerate(current_options_page):
-            y_pos = idx + 3 # Start below headers
+            y_pos = idx + header_lines # Start below headers
 
             is_selected = False
             if is_folder:
@@ -460,9 +497,13 @@ def select_files(
             if is_folder:
                 # Show folder with +/- indicator
                 indicator = "[-]" if is_selected else "[+]"
-                checkbox = f"{indicator} "
+                # Use shorter indicators for narrow windows
+                if w < 40:
+                    checkbox = f"{indicator[1]} " # Just use - or +
+                else:
+                    checkbox = f"{indicator} "
                 token_suffix = ""
-                
+
                 # Use different color for collapsed folders
                 if has_color and not is_selected:  # Collapsed folder (is_selected = path not in collapsed_folders)
                     folder_item_attr = collapsed_folder_pair | curses.A_DIM  # Use the collapsed folder color with dim effect for darker green
@@ -474,21 +515,38 @@ def select_files(
                     folder_item_attr = folder_item_pair  # Use the expanded folder color
             else:
                 # Show file with regular checkbox and token count
-                checkbox = "[X] " if is_selected else "[ ] "
-                if full_path:
+                # Use shorter checkbox for narrow windows
+                if w < 40:
+                    checkbox = "X " if is_selected else "  "
+                else:
+                    checkbox = "[X] " if is_selected else "[ ] "
+
+                # Show token count only if there's enough width
+                if full_path and w >= 50:
                     token_count = _get_file_token_count(full_path)
                     token_suffix = f" ({_format_token_count(token_count)})"
                 else:
                     token_suffix = ""
-                
+
             prefix = f"{checkbox}"
             suffix_len = len(token_suffix)
             max_name_width = w - len(prefix) - suffix_len - 1 # Max width for the display name
 
+            # Ensure max_name_width is positive
+            if max_name_width < 3:
+                max_name_width = 3
+
             # Truncate display name if necessary
             truncated_name = display_name
             if len(display_name) > max_name_width:
-                 truncated_name = "..." + display_name[-(max_name_width-3):] # Show end part
+                if max_name_width <= 3:
+                    truncated_name = display_name[:max_name_width]
+                else:
+                    # For narrow windows, show beginning; for wider, show end
+                    if w < 40:
+                        truncated_name = display_name[:max_name_width-1] + "…"
+                    else:
+                        truncated_name = "..." + display_name[-(max_name_width-3):] # Show end part
 
             # Draw prefix
             try:
