@@ -1,6 +1,7 @@
 import curses
 import os
 import sys
+import signal
 from pathlib import Path
 import pathspec # For type hint
 
@@ -196,7 +197,16 @@ def select_files(
         current_pos = 0
         has_color = False # Determined after curses init
         show_help = False  # Track whether help popup is visible
-        
+        interrupted = False  # Track if Ctrl+C was pressed
+
+        # Set up signal handler for Ctrl+C
+        def signal_handler(signum, frame):
+            nonlocal interrupted
+            interrupted = True
+
+        # Install the signal handler
+        old_handler = signal.signal(signal.SIGINT, signal_handler)
+
         # Calculate total token count for selected files
         def _calculate_total_tokens():
             total = 0
@@ -235,6 +245,13 @@ def select_files(
 
 
         while True:
+            # Check if interrupted by Ctrl+C
+            if interrupted:
+                # Save collapsed folder states before quitting
+                summary_utils.write_previous_collapsed_folders(list(collapsed_folders), directory)
+                selected_paths = None  # Signal cancellation
+                break
+
             h, w = stdscr.getmaxyx()
 
             # Calculate header lines based on width
@@ -265,9 +282,13 @@ def select_files(
 
             # --- Get Key ---
             try:
+                 stdscr.timeout(100)  # Check for key every 100ms
                  key = stdscr.getch()
+                 if key == -1:  # No key pressed
+                     continue
             except curses.error: # Handle interrupt during getch maybe?
                  key = -1 # Treat as no key press
+                 continue
 
             # --- Key Handling ---
             current_abs_index = current_page * page_size + current_pos
@@ -471,6 +492,9 @@ def select_files(
                  # The loop automatically handles redraw on next iteration
                  # Ensure current_pos remains valid is handled at top of loop
                  pass
+
+        # Restore original signal handler before exiting
+        signal.signal(signal.SIGINT, old_handler)
 
         # Return the set of selected paths (or None if cancelled)
         return selected_paths
