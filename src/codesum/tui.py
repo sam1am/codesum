@@ -357,6 +357,32 @@ def select_files(
                     current_page += 1
                     current_pos = 0
 
+            elif key == ord('n') or key == ord('N'):  # Next folder
+                # Find the next folder after current position
+                next_folder_abs_index = None
+                for i in range(current_abs_index + 1, total_options):
+                    if options[i][2]:  # is_folder
+                        next_folder_abs_index = i
+                        break
+
+                if next_folder_abs_index is not None:
+                    # Calculate which page and position the folder is on
+                    current_page = next_folder_abs_index // page_size
+                    current_pos = next_folder_abs_index % page_size
+
+            elif key == ord('p') or key == ord('P'):  # Previous folder
+                # Find the previous folder before current position
+                prev_folder_abs_index = None
+                for i in range(current_abs_index - 1, -1, -1):
+                    if options[i][2]:  # is_folder
+                        prev_folder_abs_index = i
+                        break
+
+                if prev_folder_abs_index is not None:
+                    # Calculate which page and position the folder is on
+                    current_page = prev_folder_abs_index // page_size
+                    current_pos = prev_folder_abs_index % page_size
+
             elif key == curses.KEY_LEFT or key == curses.KEY_PPAGE: # Page Up
                  if current_page > 0:
                     current_page -= 1
@@ -401,10 +427,10 @@ def select_files(
 
         # Adaptive instructions based on width
         if w >= 120:
-            instructions = "[SPACE] Toggle | [F] Folder | [A] All | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
+            instructions = "[SPACE] Toggle | [F] Folder | [A] All | [N/P] Next/Prev Folder | [ENTER] Confirm | [↑↓] Navigate | [←→/PgUp/PgDn] Pages | [Q/ESC] Quit"
             title = f"{title_base} - {directory_path}"
         elif w >= 80:
-            instructions = "[SPC] Toggle | [F] Folder | [A] All | [Enter] OK | [↑↓] Nav | [Q] Quit"
+            instructions = "[SPC] Toggle | [F] Folder | [A] All | [N/P] Folders | [Enter] OK | [↑↓] Nav | [Q] Quit"
             # Truncate directory path if needed
             max_path_len = w - len(title_base) - 4
             if len(directory_path) > max_path_len:
@@ -412,7 +438,7 @@ def select_files(
             else:
                 title = f"{title_base} - {directory_path}"
         else:  # w >= 20 (minimum)
-            instructions = "[SPC] Sel [F] Fold [A] All [Q] Quit"
+            instructions = "[SPC] Sel [F] Fold [N/P] Fld [A] All [Q] Quit"
             title = title_base
 
         try:
