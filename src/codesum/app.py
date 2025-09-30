@@ -59,20 +59,11 @@ def main():
     base_dir = Path('.').resolve() # Use current working directory as base
     print(f"Analyzing project root: {base_dir}")
 
-    # 1. Load Configuration (will prompt for API key if missing)
-    api_key, llm_model = config.load_or_prompt_config()
+    # 1. Load Configuration (without prompting)
+    api_key, llm_model = config.load_config()
 
-    # 2. Initialize OpenAI Client (if key provided)
+    # 2. OpenAI Client will be initialized later when needed
     openai_client = None
-    if api_key:
-        try:
-            openai_client = OpenAI(api_key=api_key)
-            print("OpenAI client initialized.") # Add confirmation
-        except Exception as e:
-             print(f"Error initializing OpenAI client: {e}. AI features disabled.", file=sys.stderr)
-             # Proceed without client, AI features will be disabled
-    #else: # Already printed message in load_or_prompt_config
-    #    print("AI features disabled (OpenAI API Key not provided/configured).")
 
 
     # 3. Prepare Project Directory Structure & Ignores
@@ -143,60 +134,84 @@ def main():
     summary_utils.copy_summary_to_clipboard(base_dir)
 
     # 9. Handle Optional AI Features
-    if openai_client:
-        try:
-            # Ask about compressed summary
-            generate_compressed_q = input("\nGenerate AI-powered compressed summary? (y/N): ").strip().lower()
-            if generate_compressed_q == 'y':
-                print("Generating compressed summary...") # Give feedback
-                summary_utils.create_compressed_summary(selected_files, openai_client, llm_model, base_dir)
-                compressed_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.COMPRESSED_SUMMARY_FILENAME
-                if compressed_summary_path.exists():
-                    print(f"\nAI-powered compressed code summary created in '{compressed_summary_path}'.")
+    # Ask if user wants to use AI features
+    try:
+        generate_compressed_q = input("\nGenerate AI-powered compressed summary? (y/N): ").strip().lower()
+        if generate_compressed_q == 'y':
+            # Initialize OpenAI client now if not already initialized
+            if not openai_client:
+                # Check if we have an API key, if not prompt for it
+                if not api_key:
+                    print("\n" + "-" * 50)
+                    print("AI features require an OpenAI API Key.")
+                    print(f"Configuration file: {config.CONFIG_FILE}")
+                    print("-" * 50)
+                    api_key_input = input("Please enter your OpenAI API Key (leave blank to skip): ").strip()
+                    if api_key_input:
+                        api_key = api_key_input
+                        # Save the key for future use
+                        config.save_config(api_key, llm_model)
+                        print("API Key saved for future use.")
+                    else:
+                        print("No API key provided. Skipping AI features.")
+                        print("\nProcess finished.")
+                        return
+
+                # Try to initialize the client
+                if api_key:
                     try:
-                        with open(compressed_summary_path, "r", encoding='utf-8') as f:
-                            content = f.read()
-                        token_count = openai_utils.count_tokens(content)
-                        if token_count >= 0: # Check for valid count
-                            print(f"Tokens in '{summary_utils.COMPRESSED_SUMMARY_FILENAME}': {token_count}")
+                        openai_client = OpenAI(api_key=api_key)
+                        print("OpenAI client initialized.")
                     except Exception as e:
-                        print(f"Error counting tokens for {compressed_summary_path}: {e}", file=sys.stderr)
+                        print(f"Error initializing OpenAI client: {e}", file=sys.stderr)
+                        print("AI features disabled.")
+                        print("\nProcess finished.")
+                        return
 
-                    # Ask about README generation (only if compressed summary was made and exists)
-                    generate_readme_q = input("Generate/Update README.md using AI summary? (y/N): ").strip().lower()
-                    if generate_readme_q == 'y':
-                        print("Generating README...") # Give feedback
-                        try:
-                            # Reload content just in case, though it should be the same
-                            with open(compressed_summary_path, "r", encoding='utf-8') as f:
-                                compressed_summary_content = f.read()
+            # Now proceed with compressed summary generation
+            print("Generating compressed summary...") # Give feedback
+            summary_utils.create_compressed_summary(selected_files, openai_client, llm_model, base_dir)
+            compressed_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.COMPRESSED_SUMMARY_FILENAME
+            if compressed_summary_path.exists():
+                print(f"\nAI-powered compressed code summary created in '{compressed_summary_path}'.")
+                try:
+                    with open(compressed_summary_path, "r", encoding='utf-8') as f:
+                        content = f.read()
+                    token_count = openai_utils.count_tokens(content)
+                    if token_count >= 0: # Check for valid count
+                        print(f"Tokens in '{summary_utils.COMPRESSED_SUMMARY_FILENAME}': {token_count}")
+                except Exception as e:
+                    print(f"Error counting tokens for {compressed_summary_path}: {e}", file=sys.stderr)
 
-                            if compressed_summary_content.strip():
-                                readme_content = openai_utils.generate_readme(openai_client, llm_model, compressed_summary_content)
-                                readme_file = base_dir / "README.md" # In project root
-                                with open(readme_file, "w", encoding='utf-8') as f:
-                                    f.write(readme_content)
-                                print(f"\nUpdated '{readme_file}' successfully.")
-                            else:
-                                print("Compressed summary is empty. Skipping README generation.", file=sys.stderr)
+                # Ask about README generation (only if compressed summary was made and exists)
+                generate_readme_q = input("Generate/Update README.md using AI summary? (y/N): ").strip().lower()
+                if generate_readme_q == 'y':
+                    print("Generating README...") # Give feedback
+                    try:
+                        # Reload content just in case, though it should be the same
+                        with open(compressed_summary_path, "r", encoding='utf-8') as f:
+                            compressed_summary_content = f.read()
 
-                        except FileNotFoundError:
-                            print(f"Error: Compressed summary file '{compressed_summary_path}' not found for README generation.", file=sys.stderr)
-                        except Exception as e:
-                            print(f"Error during README generation: {e}", file=sys.stderr)
-                else:
-                    print(f"AI-powered compressed summary file not found at '{compressed_summary_path}'. Skipping further AI steps.", file=sys.stderr)
+                        if compressed_summary_content.strip():
+                            readme_content = openai_utils.generate_readme(openai_client, llm_model, compressed_summary_content)
+                            readme_file = base_dir / "README.md" # In project root
+                            with open(readme_file, "w", encoding='utf-8') as f:
+                                f.write(readme_content)
+                            print(f"\nUpdated '{readme_file}' successfully.")
+                        else:
+                            print("Compressed summary is empty. Skipping README generation.", file=sys.stderr)
 
+                    except FileNotFoundError:
+                        print(f"Error: Compressed summary file '{compressed_summary_path}' not found for README generation.", file=sys.stderr)
+                    except Exception as e:
+                        print(f"Error during README generation: {e}", file=sys.stderr)
+            else:
+                print(f"AI-powered compressed summary file not found at '{compressed_summary_path}'. Skipping further AI steps.", file=sys.stderr)
 
-        except EOFError:
-             print("\nInput interrupted during AI feature prompts.")
-        except Exception as e:
-             print(f"\nAn error occurred during AI feature processing: {e}", file=sys.stderr)
-    else:
-        # Message about disabled AI features is now printed earlier during config load
-        # We can add a reminder here if needed, but might be redundant.
-        # print("\nSkipping AI features (OpenAI client not available/configured).")
-        pass # No client, skip AI section
+    except EOFError:
+        print("\nInput interrupted during AI feature prompts.")
+    except Exception as e:
+        print(f"\nAn error occurred during AI feature processing: {e}", file=sys.stderr)
 
     print("\nProcess finished.")
 
