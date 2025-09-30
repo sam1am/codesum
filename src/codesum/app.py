@@ -157,10 +157,11 @@ def main():
     else:
         print(f"Local code summary file not found at '{local_summary_path}'.", file=sys.stderr)
 
-    # 8. Copy to Clipboard
+    # 8. Copy to Clipboard automatically
+    print("\nCopying code_summary.md to clipboard...")
     summary_utils.copy_summary_to_clipboard(base_dir)
 
-    print("\nProcess finished.")
+    print("\nProcess finished. Code summary copied to clipboard!")
 
 
 if __name__ == "__main__":
