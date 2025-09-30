@@ -4,6 +4,8 @@
 
 CodeSum is a terminal-based tool that transforms your codebase into perfectly formatted context for Large Language Models. Through an interactive file selector, intelligent compression, and persistent configurations, CodeSum makes it effortless to provide your AI assistant with exactly the right code context—without the overhead.
 
+![File Selection Interface](docs/screenshots/file-selection.png)
+
 ## Why CodeSum?
 
 Working with AI coding assistants typically involves one of two approaches:
@@ -85,8 +87,6 @@ pip install codesum
 - **Keyboard shortcuts** for efficient navigation
 - **Token counting** displays exact context size
 - **Responsive layout** adapts to terminal width
-
-![File Selection Interface](docs/screenshots/file-selection.png)
 
 ### Intelligent Summaries
 - **Full-content summaries**: Complete code with project structure
