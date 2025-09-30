@@ -155,23 +155,6 @@ CodeSum creates a `.summary_files/` directory containing:
 - **`collapsed_folders.json`**: UI state for folder collapse
 - **`[filename]_metadata.json`**: Cached AI summaries with content hashes
 
-## Model Context Protocol (MCP) Server [EXPERIMENTAL]
-
-**Note**: The MCP server functionality is experimental and has not been extensively tested. Use with caution in production environments.
-
-CodeSum includes an MCP server for programmatic access:
-
-```sh
-codesum --mcp-server
-```
-
-The server runs on `localhost:8000` by default and provides:
-- `GET /health` - Health check
-- `GET /summarize?query=<query>` - Generate summary with query
-- `POST /summarize` - Generate summary with JSON payload
-
-See [MCP_USAGE.md](MCP_USAGE.md) for detailed API documentation.
-
 ## Development Installation
 
 To install from source:

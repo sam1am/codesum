@@ -83,20 +83,20 @@ def main():
             print(f"Warning: Could not read custom ignore file {custom_ignore_file}: {e}", file=sys.stderr)
 
     # 4. Load Previous Selection
-    previous_selection = summary_utils.read_previous_selection(base_dir) # Expects/returns absolute paths
+    previous_selection, previous_compressed = summary_utils.read_previous_selection(base_dir) # Returns (selected_files, compressed_files)
 
     # 5. Run Interactive File Selection
     print("Loading file selection interface...")
-    # select_files expects absolute paths in previous_selection and returns tuple of (selected_files, compressed_files)
-    selected_files, compressed_files = tui.select_files(base_dir, previous_selection, gitignore_specs, ignore_list)
+    # select_files expects absolute paths in previous_selection and previous_compressed, returns tuple of (selected_files, compressed_files)
+    selected_files, compressed_files = tui.select_files(base_dir, previous_selection, gitignore_specs, ignore_list, previous_compressed)
 
     if not selected_files:
         # Check if selection was cancelled (tui returns empty list now) or genuinely empty
         print("No files selected or selection cancelled. Exiting.")
         return
 
-    # 6. Save Current Selection (absolute paths)
-    summary_utils.write_previous_selection(selected_files, base_dir)
+    # 6. Save Current Selection (absolute paths) including compressed files
+    summary_utils.write_previous_selection(selected_files, base_dir, compressed_files)
 
     # 7. Create Local Code Summary (Full Content, with compressed summaries for marked files)
     # Initialize OpenAI client if needed for compressed summaries

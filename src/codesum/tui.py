@@ -151,7 +151,8 @@ def select_files(
     directory: Path,
     previous_selection: list[str],
     gitignore_specs: pathspec.PathSpec | None,
-    ignore_list: list[str]
+    ignore_list: list[str],
+    previous_compressed: list[str] = None
 ) -> tuple[list[str], list[str]]:
     """Interactively selects files using curses, showing folders and coloring paths."""
 
@@ -161,10 +162,10 @@ def select_files(
     from . import summary_utils
 
     tree = file_utils.build_tree_with_folders(directory, gitignore_specs, ignore_list)
-    
+
     # Determine if we're in single file mode (only one file at root level)
     single_file_mode = _is_single_file_at_root(tree)
-    
+
     # Track folder states: expanded/collapsed and paths
     collapsed_folders = set()  # Set of folder paths that are collapsed
     folder_paths = {}  # Map of folder display paths to actual paths
@@ -174,7 +175,7 @@ def select_files(
     if previous_collapsed is not None:
         collapsed_folders = set(previous_collapsed)
     # If no previous state, all folders are expanded by default (empty collapsed_folders set)
-    
+
     # flatten_tree_with_folders returns (display_name, path, is_folder, full_path_if_file) tuples
     flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
 
@@ -183,7 +184,8 @@ def select_files(
     selected_paths = set(str(Path(p).resolve()) for p in previous_selection)
 
     # Track files marked for compressed summaries (using ★ marker)
-    compressed_paths = set()  # Set of absolute paths to generate compressed summaries for
+    # Initialize from previous compressed files
+    compressed_paths = set(str(Path(p).resolve()) for p in (previous_compressed or []))
 
     # Prepare options for curses: (display_name, path, is_folder, full_path)
     options = [(display, path, is_folder, full_path) for display, path, is_folder, full_path in flattened_items]
@@ -638,6 +640,8 @@ def select_files(
         signal.signal(signal.SIGINT, old_handler)
 
         # Return the set of selected paths and compressed paths (or None if cancelled)
+        if selected_paths is None:
+            return None
         return (selected_paths, compressed_paths)
 
     # --- Draw Help Popup Helper (Inner Function) ---

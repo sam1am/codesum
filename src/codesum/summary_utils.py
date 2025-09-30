@@ -45,60 +45,91 @@ def create_hidden_directory(base_dir: Path = Path('.')):
         # For now, just print error and continue
 
 
-def read_previous_selection(base_dir: Path = Path('.')) -> list[str]:
-    """Reads previously selected file paths from JSON in the summary dir.
-    Automatically removes files that no longer exist and updates the stored selection."""
+def read_previous_selection(base_dir: Path = Path('.')) -> tuple[list[str], list[str]]:
+    """Reads previously selected file paths and compressed file paths from JSON in the summary dir.
+    Automatically removes files that no longer exist and updates the stored selection.
+    Returns tuple of (selected_files, compressed_files)."""
     selection_file = get_summary_dir(base_dir) / SELECTION_FILENAME
     if selection_file.exists():
         try:
             with open(selection_file, "r", encoding='utf-8') as f:
-                previous_selection = json.load(f)
-            # Basic validation: ensure it's a list of strings (absolute paths)
-            if isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection):
-                # Convert to absolute paths if they aren't already, though they should be stored as such
-                abs_paths = [str(Path(p).resolve())
-                             for p in previous_selection]
+                data = json.load(f)
 
-                # Filter out files that no longer exist
-                existing_paths = []
-                removed_count = 0
-                for path in abs_paths:
-                    if Path(path).exists():
-                        existing_paths.append(path)
-                    else:
-                        removed_count += 1
-                        print(
-                            f"Warning: Previously selected file no longer exists and will be removed: {path}", file=sys.stderr)
-
-                # If any files were removed, update the stored selection
-                if removed_count > 0:
-                    print(
-                        f"Removed {removed_count} non-existent file(s) from previous selection.", file=sys.stderr)
-                    try:
-                        # Write back the cleaned selection
-                        write_previous_selection(existing_paths, base_dir)
-                    except Exception as e:
-                        print(
-                            f"Warning: Could not update previous selection file after cleanup: {e}", file=sys.stderr)
-
-                return existing_paths
+            # Support both old format (list) and new format (dict)
+            if isinstance(data, list):
+                # Old format: just a list of selected files
+                previous_selection = data
+                previous_compressed = []
+            elif isinstance(data, dict):
+                # New format: dict with selected_files and compressed_files
+                previous_selection = data.get("selected_files", [])
+                previous_compressed = data.get("compressed_files", [])
             else:
                 print(
                     f"Warning: Invalid format in {selection_file}. Ignoring.", file=sys.stderr)
-                return []
+                return ([], [])
+
+            # Basic validation: ensure they're lists of strings (absolute paths)
+            if not (isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection)):
+                print(
+                    f"Warning: Invalid selected_files format in {selection_file}. Ignoring.", file=sys.stderr)
+                return ([], [])
+
+            if not (isinstance(previous_compressed, list) and all(isinstance(item, str) for item in previous_compressed)):
+                print(
+                    f"Warning: Invalid compressed_files format in {selection_file}. Ignoring.", file=sys.stderr)
+                previous_compressed = []
+
+            # Convert to absolute paths if they aren't already
+            abs_paths = [str(Path(p).resolve()) for p in previous_selection]
+            abs_compressed = [str(Path(p).resolve()) for p in previous_compressed]
+
+            # Filter out files that no longer exist
+            existing_paths = []
+            existing_compressed = []
+            removed_count = 0
+
+            for path in abs_paths:
+                if Path(path).exists():
+                    existing_paths.append(path)
+                else:
+                    removed_count += 1
+                    print(
+                        f"Warning: Previously selected file no longer exists and will be removed: {path}", file=sys.stderr)
+
+            # Also clean up compressed list - only keep files that exist and are still selected
+            for path in abs_compressed:
+                if Path(path).exists() and path in existing_paths:
+                    existing_compressed.append(path)
+                elif not Path(path).exists():
+                    removed_count += 1
+
+            # If any files were removed, update the stored selection
+            if removed_count > 0:
+                print(
+                    f"Removed {removed_count} non-existent file(s) from previous selection.", file=sys.stderr)
+                try:
+                    # Write back the cleaned selection
+                    write_previous_selection(existing_paths, base_dir, existing_compressed)
+                except Exception as e:
+                    print(
+                        f"Warning: Could not update previous selection file after cleanup: {e}", file=sys.stderr)
+
+            return (existing_paths, existing_compressed)
+
         except json.JSONDecodeError:
             print(
                 f"Warning: Could not decode {selection_file}. Ignoring.", file=sys.stderr)
-            return []
+            return ([], [])
         except IOError as e:
             print(
                 f"Warning: Could not read {selection_file}: {e}. Ignoring.", file=sys.stderr)
-            return []
+            return ([], [])
     else:
-        return []
+        return ([], [])
 
-def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.')):
-    """Writes the list of selected absolute file paths to JSON."""
+def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.'), compressed_files: list[str] = None):
+    """Writes the list of selected absolute file paths and compressed file paths to JSON."""
     hidden_directory = get_summary_dir(base_dir)
     selection_file = hidden_directory / SELECTION_FILENAME
     if not hidden_directory.exists():
@@ -112,8 +143,15 @@ def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.
         if isinstance(selected_files, list) and all(isinstance(item, str) for item in selected_files):
             # Store absolute paths for consistency
             abs_paths = [str(Path(f).resolve()) for f in selected_files]
+            abs_compressed = [str(Path(f).resolve()) for f in (compressed_files or [])]
+
+            # Save in new format with both selected and compressed
+            data = {
+                "selected_files": abs_paths,
+                "compressed_files": abs_compressed
+            }
             with open(selection_file, "w", encoding='utf-8') as f:
-                json.dump(abs_paths, f, indent=4)
+                json.dump(data, f, indent=4)
         else:
             print("Error: Invalid data type for selected_files. Cannot save selection.", file=sys.stderr)
     except IOError as e:

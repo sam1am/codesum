@@ -1,9 +1,15 @@
-[
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/app.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/config.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/file_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/folder_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/openai_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py",
-    "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/tui.py"
-]
+{
+    "selected_files": [
+        "/Users/johngarfield/Documents/GitHub/codesum/README.md",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/app.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/config.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/file_utils.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/folder_utils.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/openai_utils.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/summary_utils.py",
+        "/Users/johngarfield/Documents/GitHub/codesum/src/codesum/tui.py"
+    ],
+    "compressed_files": [
+        "/Users/johngarfield/Documents/GitHub/codesum/README.md"
+    ]
+}

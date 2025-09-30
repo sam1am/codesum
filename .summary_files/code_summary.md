@@ -8,6 +8,8 @@ Project Structure:
 |-- LICENSE
 |-- MCP_USAGE.md
 |-- README.md
+|-- docs
+    |-- screenshots
 |-- example_mcp_client.py
 |-- pyproject.toml
 |-- release.sh
@@ -31,44 +33,286 @@ Project Structure:
 ```
 
 ---
-## File: src/codesum/app.py [AI Compressed]
+## File: README.md [AI Compressed]
 
-The `app.py` script is the main entry point for a code summarization application optimized for use with Large Language Models (LLMs). It provides both an interactive Text User Interface (TUI) and a server mode for generating code summaries. Below is a detailed breakdown of its components:
+# CodeSum: Intelligent Code Context for LLMs
 
-### Main Function
-- **Purpose**: Acts as the primary entry point for the application, handling argument parsing, configuration, and execution of the main functionalities.
-- **Argument Parsing**: Utilizes `argparse` to handle command-line arguments:
-  - `--configure`: Launches an interactive configuration wizard for setting up the API key and model, then exits.
-  - `--mcp-server`: Runs the MCP server instead of the interactive application.
-  - `--mcp-host` and `--mcp-port`: Specify the host and port for the MCP server.
-- **Configuration Mode**: If `--configure` is set, it runs a configuration wizard and exits.
-- **MCP Server Mode**: If `--mcp-server` is set, it starts the MCP server with specified host and port.
-- **Normal Operation**:
-  - Sets the current working directory as the base directory.
-  - Loads configuration settings for the API key and LLM model.
-  - Prepares the project directory structure and handles `.gitignore` and custom ignore files.
-  - Loads any previous file selections.
-  - Runs an interactive file selection interface.
-  - Saves the current selection of files.
-  - Generates a local code summary, initializing an OpenAI client if compressed summaries are needed.
-  - Counts tokens in the generated summary.
-  - Copies the summary to the clipboard.
-  - Displays a summary of the operation, including selected files and token count, in an ASCII art format.
+CodeSum is a terminal-based tool designed to optimize code summaries for Large Language Models (LLMs), significantly reducing token usage and improving processing speed. It provides an interactive file selection interface, intelligent compression, and persistent configurations to streamline the process of providing relevant code context to AI coding assistants.
 
-### Key Components
-- **Configuration Handling**: Uses the `config` module to load and save API keys and model configurations.
-- **File Utilities**: Utilizes `file_utils` to parse `.gitignore` files and manage default and custom ignore lists.
-- **Summary Utilities**: Uses `summary_utils` for creating directories, reading/writing selections, and generating summaries.
-- **TUI**: The `tui` module provides an interactive interface for file selection.
-- **OpenAI Client**: The `openai_utils` module is used for token counting and potentially interacting with OpenAI's API for compressed summaries.
+## Key Features
 
-### Notes
-- The script is designed to be run as a standalone application (`python -m codesum.app`).
-- It handles errors gracefully, particularly when dealing with file operations and OpenAI client initialization.
-- ASCII art is used for a visually appealing summary of the operation's results.
+- **Token Efficiency**: Reduces token usage by 10-20x through selective file inclusion and optional AI compression.
+- **Speed**: Delivers results 4x faster by using pre-generated summaries.
+- **Interactive TUI**: Offers a user-friendly terminal interface with keyboard and mouse support for file selection and navigation.
+- **Per-File Compression**: Allows marking files for AI-powered compression, mixing full-content and compressed files.
+- **Configuration Management**: Supports saving and managing file selection configurations, enabling easy switching between different workflow contexts.
+- **Persistent State**: Remembers file selections and UI preferences per project, with support for custom ignore patterns.
+- **Smart Filtering**: Automatically respects `.gitignore` and skips common directories like `node_modules` and `.git`.
 
-This script is a comprehensive tool for generating code summaries with options for interactive configuration and server-based operation, making it versatile for different use cases.
+## Installation and Usage
 
+Requires Python 3.8 or higher. Install via pip:
+
+```sh
+pip install codesum
+```
+
+To use CodeSum, navigate to your project root and run:
+
+```sh
+codesum
+```
+
+Select files using the interactive TUI, and generate a summary to be copied to the clipboard for use with AI assistants.
+
+## Configuration
+
+Set up your OpenAI API key for AI compression features using:
+
+```sh
+codesum --configure
+```
+
+Configuration files are stored in platform-specific directories, such as `~/.config/codesum/settings.env` on Linux.
+
+## Use Cases
+
+- **Debugging**: Generate focused summaries for debugging complex issues.
+- **Feature Implementation**: Save and load configurations for feature-specific files.
+- **Code Reviews**: Compress large files while keeping critical ones detailed.
+- **Documentation**: Use AI compression for implementation files, keeping API interfaces detailed.
+
+## Performance Comparison
+
+Compared to traditional agentic approaches, CodeSum offers a 10x reduction in token usage and significantly lower interaction costs, with superior result quality due to focused context.
+
+## Development and Contribution
+
+Contributions are welcome, and the project is open to issues, feature requests, and pull requests. The tool is built with Python and leverages libraries like `openai`, `tiktoken`, and `pathspec`.
+
+## License
+
+CodeSum is licensed under the MIT License. See the LICENSE file for details.
+
+---
+## File: src/codesum/app.py
+
+```py
+# src/codesum/app.py
+
+import sys
+import argparse # Import argparse
+from pathlib import Path
+from openai import OpenAI # Just for type hint
+
+# Import from our modules
+# Use explicit relative imports
+from . import config
+from . import file_utils
+from . import tui
+from . import summary_utils
+from . import openai_utils
+from . import mcp_http_server
+
+def main():
+    """Main application entry point."""
+
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(
+        description="Generate code summaries optimized for LLMs, with an interactive TUI."
+    )
+    parser.add_argument(
+        "--configure",
+        action="store_true",
+        help="Run the interactive configuration wizard for API key and model, then exit."
+    )
+    parser.add_argument(
+        "--mcp-server",
+        action="store_true",
+        help="Run the MCP server instead of the interactive application."
+    )
+    parser.add_argument(
+        "--mcp-host",
+        default="localhost",
+        help="Host for the MCP server (default: localhost)"
+    )
+    parser.add_argument(
+        "--mcp-port",
+        type=int,
+        default=8000,
+        help="Port for the MCP server (default: 8000)"
+    )
+    # Add other arguments here if needed in the future (e.g., --non-interactive, --output-dir)
+    args = parser.parse_args()
+
+    # --- Handle Configuration Mode ---
+    if args.configure:
+        config.configure_settings_interactive()
+        sys.exit(0) # Exit after configuration
+
+    # --- Handle MCP Server Mode ---
+    if args.mcp_server:
+        mcp_http_server.run_mcp_server(args.mcp_host, args.mcp_port)
+        sys.exit(0)
+
+    # --- Normal Operation ---
+    base_dir = Path('.').resolve() # Use current working directory as base
+    print(f"Analyzing project root: {base_dir}")
+
+    # 1. Load Configuration (without prompting)
+    api_key, llm_model = config.load_config()
+
+    # 2. OpenAI Client will be initialized later when needed
+    openai_client = None
+
+
+    # 3. Prepare Project Directory Structure & Ignores
+    summary_utils.create_hidden_directory(base_dir)
+    gitignore_specs = file_utils.parse_gitignore(base_dir)
+    ignore_list = file_utils.DEFAULT_IGNORE_LIST # Use default ignore list
+    
+    # Add custom ignore patterns from .summary_files/custom_ignore.txt if it exists
+    custom_ignore_file = summary_utils.get_summary_dir(base_dir) / summary_utils.CUSTOM_IGNORE_FILENAME
+    if custom_ignore_file.exists():
+        try:
+            with open(custom_ignore_file, "r", encoding='utf-8') as f:
+                custom_ignores = [line.strip() for line in f.read().splitlines() 
+                                if line.strip() and not line.strip().startswith('#')]
+                ignore_list.extend(custom_ignores)
+        except Exception as e:
+            print(f"Warning: Could not read custom ignore file {custom_ignore_file}: {e}", file=sys.stderr)
+
+    # 4. Load Previous Selection
+    previous_selection, previous_compressed = summary_utils.read_previous_selection(base_dir) # Returns (selected_files, compressed_files)
+
+    # 5. Run Interactive File Selection
+    print("Loading file selection interface...")
+    # select_files expects absolute paths in previous_selection and previous_compressed, returns tuple of (selected_files, compressed_files)
+    selected_files, compressed_files = tui.select_files(base_dir, previous_selection, gitignore_specs, ignore_list, previous_compressed)
+
+    if not selected_files:
+        # Check if selection was cancelled (tui returns empty list now) or genuinely empty
+        print("No files selected or selection cancelled. Exiting.")
+        return
+
+    # 6. Save Current Selection (absolute paths) including compressed files
+    summary_utils.write_previous_selection(selected_files, base_dir, compressed_files)
+
+    # 7. Create Local Code Summary (Full Content, with compressed summaries for marked files)
+    # Initialize OpenAI client if needed for compressed summaries
+    if compressed_files and not openai_client:
+        if not api_key:
+            print("\n" + "-" * 50)
+            print("Compressed summaries require an OpenAI API Key.")
+            print(f"Configuration file: {config.CONFIG_FILE}")
+            print("-" * 50)
+            api_key_input = input("Please enter your OpenAI API Key (leave blank to skip compressed summaries): ").strip()
+            if api_key_input:
+                api_key = api_key_input
+                # Save the key for future use
+                config.save_config(api_key, llm_model)
+                print("API Key saved for future use.")
+            else:
+                print("No API key provided. Skipping compressed summaries for marked files.")
+                compressed_files = []
+
+        # Try to initialize the client if we have an API key
+        if api_key and compressed_files:
+            try:
+                openai_client = OpenAI(api_key=api_key)
+                print("OpenAI client initialized for compressed summaries.")
+            except Exception as e:
+                print(f"Error initializing OpenAI client: {e}", file=sys.stderr)
+                print("Compressed summaries will be skipped.")
+                compressed_files = []
+
+    print("\n\033[36m⚙ Generating code summary...\033[0m")
+    summary_utils.create_code_summary(selected_files, base_dir, compressed_files, openai_client, llm_model)
+    local_summary_path = summary_utils.get_summary_dir(base_dir) / summary_utils.CODE_SUMMARY_FILENAME
+
+    # Count tokens
+    token_count = 0
+    if local_summary_path.exists():
+        try:
+            with open(local_summary_path, "r", encoding='utf-8') as f:
+                content = f.read()
+            token_count = openai_utils.count_tokens(content)
+        except Exception as e:
+            print(f"\033[33m⚠ Error counting tokens: {e}\033[0m", file=sys.stderr)
+
+    # 8. Copy to Clipboard automatically
+    summary_utils.copy_summary_to_clipboard(base_dir)
+
+    # Print cool ASCII art logo with stats
+    # Box width is 75 chars (including ║ on each side)
+    BOX_WIDTH = 75
+    CONTENT_WIDTH = BOX_WIDTH - 4  # Subtract 4 for "║  " and "  ║"
+
+    print("\n\033[36m")
+    print("╔═════════════════════════════════════════════════════════════════════════╗")
+    print("║                                                                         ║")
+    print("║   ██████╗ ██████╗ ██████╗ ███████╗███████╗██╗   ██╗███╗   ███╗          ║")
+    print("║  ██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██║   ██║████╗ ████║          ║")
+    print("║  ██║     ██║   ██║██║  ██║█████╗  ███████╗██║   ██║██╔████╔██║          ║")
+    print("║  ██║     ██║   ██║██║  ██║██╔══╝  ╚════██║██║   ██║██║╚██╔╝██║          ║")
+    print("║  ╚██████╗╚██████╔╝██████╔╝███████╗███████║╚██████╔╝██║ ╚═╝ ██║          ║")
+    print("║   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝ ╚═════╝ ╚═╝     ╚═╝          ║")
+    print("║                                                                         ║")
+
+    # Success message line
+    success_msg = "✓ Code summary copied to clipboard!"
+    padding = " " * (CONTENT_WIDTH - len(success_msg))
+    print(f"║  \033[0m\033[32m{success_msg}\033[0m\033[36m{padding}║")
+    print("║                                                                         ║")
+    print("╠═════════════════════════════════════════════════════════════════════════╣")
+
+    # Stats section
+    files_line = f"Selected Files: {len(selected_files)}"
+    padding = " " * (CONTENT_WIDTH - len(files_line))
+    print(f"║  \033[0m\033[1m{files_line}\033[0m\033[36m{padding}║")
+
+    if compressed_files:
+        comp_line = f"Compressed Summaries: {len(compressed_files)}"
+        padding = " " * (CONTENT_WIDTH - len(comp_line))
+        print(f"║  \033[0m\033[1m{comp_line}\033[0m\033[36m{padding}║")
+
+    token_str = f"{token_count:,}" if token_count > 0 else "0"
+    tokens_line = f"Total Tokens: {token_str}"
+    padding = " " * (CONTENT_WIDTH - len(tokens_line))
+    print(f"║  \033[0m\033[1m{tokens_line}\033[0m\033[36m{padding}║")
+    print("║                                                                         ║")
+
+    # Show all files
+    files_header = "Files:"
+    padding = " " * (CONTENT_WIDTH - len(files_header))
+    print(f"║  \033[0m\033[1m{files_header}\033[0m\033[36m{padding}║")
+
+    for f_abs_str in selected_files:
+        f_path = Path(f_abs_str)
+        try:
+            rel_path = f_path.relative_to(base_dir).as_posix()
+        except ValueError:
+            rel_path = f_path.name
+
+        # Truncate if too long (max 67 chars for path + marker and space)
+        if len(rel_path) > 67:
+            rel_path = "..." + rel_path[-64:]
+
+        # Mark compressed files with star
+        marker = "★" if f_abs_str in compressed_files else "•"
+        file_line = f"{marker} {rel_path}"
+        padding = " " * (CONTENT_WIDTH - len(file_line))
+        print(f"║  \033[0m{file_line}\033[36m{padding}║")
+
+    print("║                                                                         ║")
+    print("╚═════════════════════════════════════════════════════════════════════════╝")
+    print("\033[0m")
+
+
+if __name__ == "__main__":
+    # This allows running 'python -m codesum.app'
+    main()
+```
 ---
 ## File: src/codesum/config.py
 
@@ -1110,58 +1354,502 @@ def count_tokens(text: str, encoding_name: str = "o200k_base") -> int:
         return -1 # Or 0, or raise an exception
 ```
 ---
-## File: src/codesum/summary_utils.py [AI Compressed]
+## File: src/codesum/summary_utils.py
 
-The `summary_utils.py` module is designed to manage and generate code summaries, including both full and AI-compressed summaries, for a given project directory. It handles file and directory management, reading and writing configuration data, and interacting with an AI client for generating compressed summaries.
+```py
+import json
+import hashlib
+from pathlib import Path
+import sys
 
-### Constants
-- **SUMMARY_DIR_NAME**: Directory name for storing summary files.
-- **CUSTOM_IGNORE_FILENAME**: Filename for custom ignore patterns.
-- **CODE_SUMMARY_FILENAME**: Filename for the full code summary.
-- **COMPRESSED_SUMMARY_FILENAME**: Filename for the compressed code summary.
-- **SELECTION_FILENAME**: Filename for storing previous file selections.
-- **COLLAPSED_FOLDERS_FILENAME**: Filename for storing collapsed folder paths.
-- **METADATA_SUFFIX**: Suffix for metadata files.
-- **SELECTION_CONFIGS_FILENAME**: Filename for storing selection configurations.
+from openai import OpenAI # Type hint
+import pyperclip
 
-### Functions
+# Import functions from other modules within the package
+from . import openai_utils
+from . import file_utils
 
-- **get_summary_dir(base_dir: Path = Path('.')) -> Path**: Returns the path to the summary directory within the base directory.
+SUMMARY_DIR_NAME = ".summary_files"
+CUSTOM_IGNORE_FILENAME = "codesum_ignore.txt"
+CODE_SUMMARY_FILENAME = "code_summary.md"
+COMPRESSED_SUMMARY_FILENAME = "compressed_code_summary.md"
+SELECTION_FILENAME = "previous_selection.json"
+COLLAPSED_FOLDERS_FILENAME = "collapsed_folders.json"
+METADATA_SUFFIX = "_metadata.json"
+SELECTION_CONFIGS_FILENAME = "selection_configs.json"
 
-- **create_hidden_directory(base_dir: Path = Path('.'))**: Creates the summary directory and a custom ignore file if they don't exist.
+def get_summary_dir(base_dir: Path = Path('.')) -> Path:
+    """Gets the path to the summary directory within the base directory."""
+    return base_dir.resolve() / SUMMARY_DIR_NAME
 
-- **read_previous_selection(base_dir: Path = Path('.')) -> list[str]**: Reads previously selected file paths from a JSON file, removing non-existent files and updating the stored selection.
+def create_hidden_directory(base_dir: Path = Path('.')):
+    """Creates the hidden summary directory if it doesn't exist and creates a custom ignore file."""
+    hidden_directory = get_summary_dir(base_dir)
+    try:
+        hidden_directory.mkdir(exist_ok=True)
+        
+        # Create custom ignore file if it doesn't exist
+        custom_ignore_file = hidden_directory / CUSTOM_IGNORE_FILENAME
+        if not custom_ignore_file.exists():
+            with open(custom_ignore_file, "w", encoding='utf-8') as f:
+                f.write("# Add custom ignore patterns here, one per line\n")
+                f.write("# These patterns will be added to the default ignores and .gitignore patterns\n")
+                f.write("# Example:\n")
+                f.write("# *.log\n")
+                f.write("# temp/\n")
+                f.write("# secret.txt\n")
+    except OSError as e:
+        print(f"Error creating directory {hidden_directory}: {e}", file=sys.stderr)
+        # Decide if this is fatal or not, maybe return False?
+        # For now, just print error and continue
 
-- **write_previous_selection(selected_files: list[str], base_dir: Path = Path('.'))**: Writes the list of selected file paths to a JSON file.
 
-- **create_code_summary(selected_files: list[str], base_dir: Path = Path('.'), compressed_files: list[str] = None, client: OpenAI | None = None, llm_model: str = None)**: Generates a code summary file, using AI for compressed summaries if specified.
+def read_previous_selection(base_dir: Path = Path('.')) -> tuple[list[str], list[str]]:
+    """Reads previously selected file paths and compressed file paths from JSON in the summary dir.
+    Automatically removes files that no longer exist and updates the stored selection.
+    Returns tuple of (selected_files, compressed_files)."""
+    selection_file = get_summary_dir(base_dir) / SELECTION_FILENAME
+    if selection_file.exists():
+        try:
+            with open(selection_file, "r", encoding='utf-8') as f:
+                data = json.load(f)
 
-- **create_compressed_summary(selected_files: list[str], client: OpenAI | None, llm_model: str, base_dir: Path = Path('.'))**: Creates a compressed summary markdown file using AI for non-main files.
+            # Support both old format (list) and new format (dict)
+            if isinstance(data, list):
+                # Old format: just a list of selected files
+                previous_selection = data
+                previous_compressed = []
+            elif isinstance(data, dict):
+                # New format: dict with selected_files and compressed_files
+                previous_selection = data.get("selected_files", [])
+                previous_compressed = data.get("compressed_files", [])
+            else:
+                print(
+                    f"Warning: Invalid format in {selection_file}. Ignoring.", file=sys.stderr)
+                return ([], [])
 
-- **copy_summary_to_clipboard(base_dir: Path = Path('.'))**: Copies the content of the local code summary to the clipboard.
+            # Basic validation: ensure they're lists of strings (absolute paths)
+            if not (isinstance(previous_selection, list) and all(isinstance(item, str) for item in previous_selection)):
+                print(
+                    f"Warning: Invalid selected_files format in {selection_file}. Ignoring.", file=sys.stderr)
+                return ([], [])
 
-- **read_previous_collapsed_folders(base_dir: Path = Path('.')) -> list[str] | None**: Reads previously collapsed folder paths from a JSON file.
+            if not (isinstance(previous_compressed, list) and all(isinstance(item, str) for item in previous_compressed)):
+                print(
+                    f"Warning: Invalid compressed_files format in {selection_file}. Ignoring.", file=sys.stderr)
+                previous_compressed = []
 
-- **write_previous_collapsed_folders(collapsed_folders: list[str], base_dir: Path = Path('.'))**: Writes the list of collapsed folder paths to a JSON file.
+            # Convert to absolute paths if they aren't already
+            abs_paths = [str(Path(p).resolve()) for p in previous_selection]
+            abs_compressed = [str(Path(p).resolve()) for p in previous_compressed]
 
-- **read_selection_configs(base_dir: Path = Path('.')) -> dict**: Reads saved selection configurations from a JSON file.
+            # Filter out files that no longer exist
+            existing_paths = []
+            existing_compressed = []
+            removed_count = 0
 
-- **write_selection_configs(configs: dict, base_dir: Path = Path('.'))**: Writes selection configurations to a JSON file.
+            for path in abs_paths:
+                if Path(path).exists():
+                    existing_paths.append(path)
+                else:
+                    removed_count += 1
+                    print(
+                        f"Warning: Previously selected file no longer exists and will be removed: {path}", file=sys.stderr)
 
-- **save_selection_config(name: str, selected_files: list[str], compressed_files: list[str], base_dir: Path = Path('.'))**: Saves a named selection configuration.
+            # Also clean up compressed list - only keep files that exist and are still selected
+            for path in abs_compressed:
+                if Path(path).exists() and path in existing_paths:
+                    existing_compressed.append(path)
+                elif not Path(path).exists():
+                    removed_count += 1
 
-- **load_selection_config(name: str, base_dir: Path = Path('.')) -> tuple[list[str], list[str]] | None**: Loads a named selection configuration.
+            # If any files were removed, update the stored selection
+            if removed_count > 0:
+                print(
+                    f"Removed {removed_count} non-existent file(s) from previous selection.", file=sys.stderr)
+                try:
+                    # Write back the cleaned selection
+                    write_previous_selection(existing_paths, base_dir, existing_compressed)
+                except Exception as e:
+                    print(
+                        f"Warning: Could not update previous selection file after cleanup: {e}", file=sys.stderr)
 
-- **delete_selection_config(name: str, base_dir: Path = Path('.'))**: Deletes a named selection configuration.
+            return (existing_paths, existing_compressed)
 
-- **rename_selection_config(old_name: str, new_name: str, base_dir: Path = Path('.'))**: Renames a selection configuration.
+        except json.JSONDecodeError:
+            print(
+                f"Warning: Could not decode {selection_file}. Ignoring.", file=sys.stderr)
+            return ([], [])
+        except IOError as e:
+            print(
+                f"Warning: Could not read {selection_file}: {e}. Ignoring.", file=sys.stderr)
+            return ([], [])
+    else:
+        return ([], [])
 
-### Notes
-- The module heavily relies on file I/O operations for reading and writing JSON files.
-- It uses the `openai_utils` module for AI interactions, specifically for generating compressed summaries.
-- Error handling is implemented for file operations, with warnings printed to `sys.stderr`.
-- The module provides functionality to manage and cache summaries using metadata files to avoid redundant AI calls.
+def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.'), compressed_files: list[str] = None):
+    """Writes the list of selected absolute file paths and compressed file paths to JSON."""
+    hidden_directory = get_summary_dir(base_dir)
+    selection_file = hidden_directory / SELECTION_FILENAME
+    if not hidden_directory.exists():
+        # Attempt to create it if missing
+        create_hidden_directory(base_dir)
+        if not hidden_directory.exists(): # Check again if creation failed
+             print(f"Warning: Cannot save selection, directory {hidden_directory} not found/creatable.", file=sys.stderr)
+             return
+    try:
+        # Ensure selected_files is a list of strings (absolute paths)
+        if isinstance(selected_files, list) and all(isinstance(item, str) for item in selected_files):
+            # Store absolute paths for consistency
+            abs_paths = [str(Path(f).resolve()) for f in selected_files]
+            abs_compressed = [str(Path(f).resolve()) for f in (compressed_files or [])]
 
+            # Save in new format with both selected and compressed
+            data = {
+                "selected_files": abs_paths,
+                "compressed_files": abs_compressed
+            }
+            with open(selection_file, "w", encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+        else:
+            print("Error: Invalid data type for selected_files. Cannot save selection.", file=sys.stderr)
+    except IOError as e:
+        print(f"Error writing previous selection file {selection_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing selection data to JSON: {e}", file=sys.stderr)
+
+
+def create_code_summary(
+    selected_files: list[str],
+    base_dir: Path = Path('.'),
+    compressed_files: list[str] = None,
+    client: OpenAI | None = None,
+    llm_model: str = None
+):
+    """Creates a basic code summary file with full content of selected files.
+
+    For files in compressed_files list, generates AI-powered compressed summaries instead of full content.
+    """
+    summary_directory = get_summary_dir(base_dir)
+    summary_file = summary_directory / CODE_SUMMARY_FILENAME
+    project_root = base_dir.resolve()
+
+    if not summary_directory.exists():
+        print(f"Warning: Summary directory {summary_directory} does not exist. Skipping summary creation.", file=sys.stderr)
+        return
+
+    # Convert compressed_files to set for efficient lookup
+    compressed_set = set(compressed_files) if compressed_files else set()
+
+    try:
+        gitignore_specs = file_utils.parse_gitignore(project_root)
+        tree_output = file_utils.get_tree_output(project_root, gitignore_specs, file_utils.DEFAULT_IGNORE_LIST)
+
+        with open(summary_file, "w", encoding='utf-8') as summary:
+            summary.write(f"Project Root: {project_root}\n")
+            summary.write(f"Project Structure:\n```\n{tree_output}\n```\n\n---\n")
+
+            for file_path_str in selected_files: # selected_files should be absolute paths
+                try:
+                    file_path_obj = Path(file_path_str)
+                    # Calculate relative path from project root for display
+                    try:
+                        relative_path = file_path_obj.relative_to(project_root)
+                    except ValueError:
+                        relative_path = file_path_obj # Fallback if not relative (shouldn't happen often)
+
+                    lang_hint = file_path_obj.suffix.lstrip('.') if file_path_obj.suffix else ""
+
+                    # Check if this file should use compressed summary
+                    if file_path_str in compressed_set and client and llm_model:
+                        summary.write(f"## File: {relative_path.as_posix()} [AI Compressed]\n\n")
+                        print(f"Generating compressed summary for {relative_path.as_posix()}...")
+
+                        # Read the file content
+                        with open(file_path_obj, "r", encoding='utf-8') as f:
+                            file_content = f.read()
+
+                        # Generate compressed summary using AI
+                        compressed_content = openai_utils.compress_single_file(
+                            client,
+                            llm_model,
+                            str(relative_path.as_posix()),
+                            file_content
+                        )
+
+                        if compressed_content:
+                            summary.write(f"{compressed_content}\n\n---\n")
+                        else:
+                            # Fallback to full content if compression fails
+                            summary.write(f"```{lang_hint}\n")
+                            summary.write(file_content)
+                            summary.write("\n```\n---\n")
+                    else:
+                        # Regular full content
+                        summary.write(f"## File: {relative_path.as_posix()}\n\n")
+                        summary.write(f"```{lang_hint}\n")
+                        with open(file_path_obj, "r", encoding='utf-8') as f:
+                            summary.write(f.read())
+                        summary.write("\n```\n---\n")
+
+                except FileNotFoundError:
+                     summary.write(f"## File: {file_path_str}\n\nError: File not found.\n\n---\n")
+                except Exception as e:
+                     summary.write(f"## File: {file_path_str}\n\nError reading file: {e}\n\n---\n")
+    except IOError as e:
+        print(f"Error writing local code summary file {summary_file}: {e}", file=sys.stderr)
+    except Exception as e:
+         print(f"An unexpected error occurred during local code summary creation: {e}", file=sys.stderr)
+
+
+def create_compressed_summary(
+    selected_files: list[str],
+    client: OpenAI | None,
+    llm_model: str,
+    base_dir: Path = Path('.')
+    ):
+    """Creates a compressed summary markdown file using AI for non-main files."""
+    summary_directory = get_summary_dir(base_dir)
+    compressed_summary_file = summary_directory / COMPRESSED_SUMMARY_FILENAME
+    project_root = base_dir.resolve()
+
+    if not summary_directory.exists():
+         print(f"Warning: Summary directory {summary_directory} does not exist. Skipping compressed summary generation.", file=sys.stderr)
+         return # Or create it: create_hidden_directory()
+
+    if not client:
+        print("OpenAI client not available. Cannot generate compressed summary.", file=sys.stderr)
+        # Optionally create a file indicating the error or just skip
+        return
+
+    try:
+        gitignore_specs = file_utils.parse_gitignore(project_root)
+        tree_output = file_utils.get_tree_output(project_root, gitignore_specs, file_utils.DEFAULT_IGNORE_LIST)
+
+        # Overwrite existing compressed summary
+        with open(compressed_summary_file, "w", encoding='utf-8') as summary:
+            summary.write(f"Project Root: {project_root}\n")
+            summary.write(f"Project Structure:\n```\n{tree_output}\n```\n\n---\n")
+
+            for file_path_str in selected_files: # Absolute paths
+                file_path_obj = Path(file_path_str)
+                try:
+                    relative_path = file_path_obj.relative_to(project_root)
+                    relative_path_str = relative_path.as_posix()
+                except ValueError:
+                    relative_path = file_path_obj # Fallback
+                    relative_path_str = str(file_path_obj)
+
+
+                # Define metadata path based on relative structure *within* .summary_files
+                metadata_dir_relative = relative_path.parent # Relative path of the dir
+                metadata_directory = summary_directory / metadata_dir_relative
+                metadata_directory.mkdir(parents=True, exist_ok=True)
+                metadata_path = metadata_directory / f"{file_path_obj.name}{METADATA_SUFFIX}"
+
+                file_summary = "" # Initialize summary variable
+
+                # --- AI Summary Generation with Hashing ---
+                try:
+                    with open(file_path_obj, "r", encoding='utf-8') as f:
+                        file_content = f.read()
+                    current_hash = hashlib.md5(file_content.encode("utf-8")).hexdigest()
+                except Exception as e:
+                    print(f"Error reading file {relative_path_str} for hashing: {e}", file=sys.stderr)
+                    summary.write(f"\n## File: {relative_path_str}\n\nError reading file: {e}\n---\n")
+                    continue # Skip this file
+
+                # Check cache
+                use_cached = False
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, "r", encoding='utf-8') as metadata_file:
+                            metadata = json.load(metadata_file)
+                        saved_hash = metadata.get("hash")
+                        if saved_hash == current_hash:
+                            print(f"File '{relative_path_str}' unchanged. Using cached summary.")
+                            file_summary = metadata.get("summary", "Error: Cached summary not found.")
+                            use_cached = True
+                        else:
+                            print(f"File '{relative_path_str}' modified. Generating new summary...")
+                    except json.JSONDecodeError:
+                        print(f"Warning: Corrupted metadata for {relative_path_str}. Regenerating summary.", file=sys.stderr)
+                    except Exception as e:
+                         print(f"Error reading metadata for {relative_path_str}: {e}. Regenerating summary.", file=sys.stderr)
+
+                # Generate summary if not cached or cache invalid/missing
+                if not use_cached:
+                     print(f"Generating summary for {relative_path_str}...")
+                     # Call the utility function
+                     file_summary = openai_utils.generate_summary(client, llm_model, file_content)
+                     # Cache the new summary and hash
+                     metadata = {"hash": current_hash, "summary": file_summary}
+                     try:
+                         with open(metadata_path, "w", encoding='utf-8') as metadata_file:
+                             json.dump(metadata, metadata_file, indent=4)
+                     except Exception as e:
+                         print(f"Error writing metadata for {relative_path_str}: {e}", file=sys.stderr)
+
+
+                # Write summary to the compressed file
+                summary.write(f"\n## File: {relative_path_str}\n\nSummary:\n```markdown\n") # Assume summary is markdownish
+                summary.write(file_summary)
+                summary.write("\n```\n---\n")
+                print(f"Processed summary for: {relative_path_str}")
+                print("-----------------------------------")
+
+
+    except IOError as e:
+        print(f"Error writing compressed summary file {compressed_summary_file}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"An unexpected error occurred during compressed summary creation: {e}", file=sys.stderr)
+
+
+def copy_summary_to_clipboard(base_dir: Path = Path('.')):
+    """Copies the content of the local code_summary.md to the clipboard."""
+    summary_file_path = get_summary_dir(base_dir) / CODE_SUMMARY_FILENAME
+    if summary_file_path.exists():
+        try:
+            with open(summary_file_path, "r", encoding='utf-8') as summary_file:
+                summary_content = summary_file.read()
+            pyperclip.copy(summary_content)
+            print("Local code summary content has been copied to clipboard.")
+            return True
+        except pyperclip.PyperclipException as e:
+            print(f"Could not copy to clipboard: {e}. You can manually copy from {summary_file_path}", file=sys.stderr)
+        except Exception as e:
+            print(f"Error reading summary file for clipboard: {e}", file=sys.stderr)
+    else:
+        print("Local code summary file not found, skipping clipboard copy.", file=sys.stderr)
+    return False
+
+
+def read_previous_collapsed_folders(base_dir: Path = Path('.')) -> list[str] | None:
+    """Reads previously collapsed folder paths from JSON in the summary dir."""
+    collapsed_folders_file = get_summary_dir(base_dir) / COLLAPSED_FOLDERS_FILENAME
+    if collapsed_folders_file.exists():
+        try:
+            with open(collapsed_folders_file, "r", encoding='utf-8') as f:
+                previous_collapsed = json.load(f)
+            # Basic validation: ensure it's a list of strings
+            if isinstance(previous_collapsed, list) and all(isinstance(item, str) for item in previous_collapsed):
+                return previous_collapsed
+            else:
+                print(
+                    f"Warning: Invalid format in {collapsed_folders_file}. Ignoring.", file=sys.stderr)
+                return None
+        except json.JSONDecodeError:
+            print(
+                f"Warning: Could not decode {collapsed_folders_file}. Ignoring.", file=sys.stderr)
+            return None
+        except IOError as e:
+            print(
+                f"Warning: Could not read {collapsed_folders_file}: {e}. Ignoring.", file=sys.stderr)
+            return None
+    else:
+        return None
+
+
+def write_previous_collapsed_folders(collapsed_folders: list[str], base_dir: Path = Path('.')):
+    """Writes the list of collapsed folder paths to JSON."""
+    hidden_directory = get_summary_dir(base_dir)
+    collapsed_folders_file = hidden_directory / COLLAPSED_FOLDERS_FILENAME
+    if not hidden_directory.exists():
+        # Attempt to create it if missing
+        create_hidden_directory(base_dir)
+        if not hidden_directory.exists(): # Check again if creation failed
+             print(f"Warning: Cannot save collapsed folders, directory {hidden_directory} not found/creatable.", file=sys.stderr)
+             return
+    try:
+        # Ensure collapsed_folders is a list of strings
+        if isinstance(collapsed_folders, list) and all(isinstance(item, str) for item in collapsed_folders):
+            with open(collapsed_folders_file, "w", encoding='utf-8') as f:
+                json.dump(collapsed_folders, f, indent=4)
+        else:
+            print("Error: Invalid data type for collapsed_folders. Cannot save collapsed folders.", file=sys.stderr)
+    except IOError as e:
+        print(f"Error writing collapsed folders file {collapsed_folders_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing collapsed folders data to JSON: {e}", file=sys.stderr)
+
+
+# --- Selection Configuration Management ---
+
+def read_selection_configs(base_dir: Path = Path('.')) -> dict:
+    """Reads saved selection configurations from JSON."""
+    configs_file = get_summary_dir(base_dir) / SELECTION_CONFIGS_FILENAME
+    if configs_file.exists():
+        try:
+            with open(configs_file, "r", encoding='utf-8') as f:
+                configs = json.load(f)
+            if isinstance(configs, dict):
+                return configs
+            else:
+                print(f"Warning: Invalid format in {configs_file}. Ignoring.", file=sys.stderr)
+                return {}
+        except json.JSONDecodeError:
+            print(f"Warning: Could not decode {configs_file}. Ignoring.", file=sys.stderr)
+            return {}
+        except IOError as e:
+            print(f"Warning: Could not read {configs_file}: {e}. Ignoring.", file=sys.stderr)
+            return {}
+    else:
+        return {}
+
+
+def write_selection_configs(configs: dict, base_dir: Path = Path('.')):
+    """Writes selection configurations to JSON."""
+    configs_file = get_summary_dir(base_dir) / SELECTION_CONFIGS_FILENAME
+    try:
+        with open(configs_file, "w", encoding='utf-8') as f:
+            json.dump(configs, f, indent=2)
+    except IOError as e:
+        print(f"Warning: Could not write to {configs_file}: {e}", file=sys.stderr)
+    except TypeError as e:
+        print(f"Error serializing configs to JSON: {e}", file=sys.stderr)
+
+
+def save_selection_config(name: str, selected_files: list[str], compressed_files: list[str], base_dir: Path = Path('.')):
+    """Saves a named selection configuration."""
+    configs = read_selection_configs(base_dir)
+    configs[name] = {
+        "selected_files": selected_files,
+        "compressed_files": compressed_files
+    }
+    write_selection_configs(configs, base_dir)
+
+
+def load_selection_config(name: str, base_dir: Path = Path('.')) -> tuple[list[str], list[str]] | None:
+    """Loads a named selection configuration. Returns (selected_files, compressed_files) or None."""
+    configs = read_selection_configs(base_dir)
+    if name in configs:
+        config = configs[name]
+        selected = config.get("selected_files", [])
+        compressed = config.get("compressed_files", [])
+        return (selected, compressed)
+    return None
+
+
+def delete_selection_config(name: str, base_dir: Path = Path('.')):
+    """Deletes a named selection configuration."""
+    configs = read_selection_configs(base_dir)
+    if name in configs:
+        del configs[name]
+        write_selection_configs(configs, base_dir)
+        return True
+    return False
+
+
+def rename_selection_config(old_name: str, new_name: str, base_dir: Path = Path('.')):
+    """Renames a selection configuration."""
+    configs = read_selection_configs(base_dir)
+    if old_name in configs and new_name not in configs:
+        configs[new_name] = configs[old_name]
+        del configs[old_name]
+        write_selection_configs(configs, base_dir)
+        return True
+    return False
+```
 ---
 ## File: src/codesum/tui.py
 
@@ -1319,7 +2007,8 @@ def select_files(
     directory: Path,
     previous_selection: list[str],
     gitignore_specs: pathspec.PathSpec | None,
-    ignore_list: list[str]
+    ignore_list: list[str],
+    previous_compressed: list[str] = None
 ) -> tuple[list[str], list[str]]:
     """Interactively selects files using curses, showing folders and coloring paths."""
 
@@ -1329,10 +2018,10 @@ def select_files(
     from . import summary_utils
 
     tree = file_utils.build_tree_with_folders(directory, gitignore_specs, ignore_list)
-    
+
     # Determine if we're in single file mode (only one file at root level)
     single_file_mode = _is_single_file_at_root(tree)
-    
+
     # Track folder states: expanded/collapsed and paths
     collapsed_folders = set()  # Set of folder paths that are collapsed
     folder_paths = {}  # Map of folder display paths to actual paths
@@ -1342,7 +2031,7 @@ def select_files(
     if previous_collapsed is not None:
         collapsed_folders = set(previous_collapsed)
     # If no previous state, all folders are expanded by default (empty collapsed_folders set)
-    
+
     # flatten_tree_with_folders returns (display_name, path, is_folder, full_path_if_file) tuples
     flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
 
@@ -1351,7 +2040,8 @@ def select_files(
     selected_paths = set(str(Path(p).resolve()) for p in previous_selection)
 
     # Track files marked for compressed summaries (using ★ marker)
-    compressed_paths = set()  # Set of absolute paths to generate compressed summaries for
+    # Initialize from previous compressed files
+    compressed_paths = set(str(Path(p).resolve()) for p in (previous_compressed or []))
 
     # Prepare options for curses: (display_name, path, is_folder, full_path)
     options = [(display, path, is_folder, full_path) for display, path, is_folder, full_path in flattened_items]
