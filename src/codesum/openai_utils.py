@@ -99,6 +99,44 @@ def generate_readme(client: OpenAI, model: str, compressed_summary: str) -> str:
         print(f"Error calling OpenAI API for README: {e}", file=sys.stderr)
         return f"# README Generation Error\n\nAn error occurred:\n```\n{e}\n```"
 
+def compress_single_file(client: OpenAI, model: str, file_path: str, file_content: str) -> str:
+    """Generates a compressed summary for a single file using the OpenAI API."""
+    if not client:
+        return "Error: OpenAI client not available."
+
+    system_prompt = _load_prompt("system_summary.md")
+    if system_prompt.startswith("Error:"):
+        return system_prompt # Return error if prompt loading failed
+
+    try:
+        # Create a prompt that includes the file path context
+        user_prompt = f"File: {file_path}\n\n{file_content}"
+
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=1500, # Limit for per-file summaries
+            temperature=0.3 # Lower temperature for more focused summaries
+        )
+        summary = completion.choices[0].message.content
+        return summary if summary else "Error: Empty summary received from API."
+    except RateLimitError:
+         print(f"Error: OpenAI API rate limit exceeded while compressing {file_path}", file=sys.stderr)
+         return "Error: API rate limit exceeded."
+    except APITimeoutError:
+         print(f"Error: OpenAI API request timed out while compressing {file_path}", file=sys.stderr)
+         return "Error: API request timed out."
+    except APIError as e:
+        print(f"Error: OpenAI API returned an error while compressing {file_path}: {e}", file=sys.stderr)
+        return f"Error: OpenAI API error: {e}"
+    except Exception as e:
+        print(f"Error calling OpenAI API for {file_path}: {e}", file=sys.stderr)
+        return f"Error generating summary: {e}"
+
+
 def count_tokens(text: str, encoding_name: str = "o200k_base") -> int:
     """
     Counts the number of tokens in a text string using tiktoken.

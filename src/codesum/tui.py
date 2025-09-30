@@ -142,6 +142,8 @@ COLOR_PAIR_COLLAPSED_FOLDER = 6  # Darker green for collapsed folder items in th
 COLOR_PAIR_FILE = 3
 COLOR_PAIR_STATUS = 4 # For the cursor line background/foreground
 COLOR_PAIR_HIGHLIGHT = 5 # For the cursor line background/foreground
+COLOR_PAIR_SELECTED = 7  # Gold/yellow for selected files (X marker)
+COLOR_PAIR_COMPRESSED = 8  # Different color for compressed summary marker (★)
 
 
 # --- Main Selection Function ---
@@ -150,7 +152,7 @@ def select_files(
     previous_selection: list[str],
     gitignore_specs: pathspec.PathSpec | None,
     ignore_list: list[str]
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Interactively selects files using curses, showing folders and coloring paths."""
 
     # Import build_tree and flatten_tree locally to avoid circular dependency potential
@@ -180,6 +182,9 @@ def select_files(
     # Ensure paths from previous selection are resolved absolute paths
     selected_paths = set(str(Path(p).resolve()) for p in previous_selection)
 
+    # Track files marked for compressed summaries (using ★ marker)
+    compressed_paths = set()  # Set of absolute paths to generate compressed summaries for
+
     # Prepare options for curses: (display_name, path, is_folder, full_path)
     options = [(display, path, is_folder, full_path) for display, path, is_folder, full_path in flattened_items]
     
@@ -191,7 +196,7 @@ def select_files(
 
     # --- Curses Main Logic (Inner Function) ---
     def _curses_main(stdscr):
-        nonlocal selected_paths, collapsed_folders # Allow modification of the set from parent scope
+        nonlocal selected_paths, collapsed_folders, compressed_paths # Allow modification of the set from parent scope
         curses.curs_set(0)  # Hide cursor
         current_page = 0
         current_pos = 0
@@ -213,13 +218,15 @@ def select_files(
         # Install the signal handler
         old_handler = signal.signal(signal.SIGINT, signal_handler)
 
-        # Calculate total token count for selected files
+        # Calculate total token count for selected files (excluding compressed files)
         def _calculate_total_tokens():
             total = 0
             for file_path in selected_paths:
-                token_count = _get_file_token_count(file_path)
-                if token_count > 0:
-                    total += token_count
+                # Don't count tokens for files marked for compressed summary
+                if file_path not in compressed_paths:
+                    token_count = _get_file_token_count(file_path)
+                    if token_count > 0:
+                        total += token_count
             return total
 
         # Initialize colors safely
@@ -235,6 +242,8 @@ def select_files(
                   curses.init_pair(COLOR_PAIR_FILE, curses.COLOR_WHITE, -1)
                   curses.init_pair(COLOR_PAIR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE) # Status bar
                   curses.init_pair(COLOR_PAIR_HIGHLIGHT, curses.COLOR_BLACK, curses.COLOR_CYAN) # Highlight line
+                  curses.init_pair(COLOR_PAIR_SELECTED, curses.COLOR_YELLOW, -1)  # Gold/yellow for selected (X)
+                  curses.init_pair(COLOR_PAIR_COMPRESSED, curses.COLOR_MAGENTA, -1)  # Magenta for compressed (★)
              else:
                   # Define fallback pairs for monochrome if needed, though A_REVERSE works
                   curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK)
@@ -284,7 +293,7 @@ def select_files(
             if show_help:
                 _draw_help_popup(stdscr, has_color)
             else:
-                _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
+                _draw_menu(stdscr, options, selected_paths, compressed_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens)
 
             # --- Get Key ---
             try:
@@ -427,11 +436,33 @@ def select_files(
                     else:
                         # Toggle file selection
                         resolved_path = str(Path(full_path).resolve()) # Use resolved path for set
+                        # If file is currently marked for compressed summary, remove that marking
+                        if resolved_path in compressed_paths:
+                            compressed_paths.remove(resolved_path)
+                        # Toggle regular selection
                         if resolved_path in selected_paths:
                             selected_paths.remove(resolved_path)
                         else:
                             selected_paths.add(resolved_path)
                         # Move down after selection (optional usability enhancement)
+                        if current_pos < max_pos_on_page:
+                             current_pos += 1
+                        elif current_page < total_pages - 1:
+                              current_page += 1
+                              current_pos = 0
+
+            elif key == ord('s') or key == ord('S'):  # Toggle compressed summary
+                if 0 <= current_abs_index < total_options:
+                    display_name, path, is_folder, full_path = options[current_abs_index]
+                    if not is_folder:  # Only works on files
+                        resolved_path = str(Path(full_path).resolve())
+                        if resolved_path in compressed_paths:
+                            compressed_paths.remove(resolved_path)
+                        else:
+                            # Add to compressed paths and ensure it's also selected
+                            compressed_paths.add(resolved_path)
+                            selected_paths.add(resolved_path)
+                        # Move down after marking (optional usability enhancement)
                         if current_pos < max_pos_on_page:
                              current_pos += 1
                         elif current_page < total_pages - 1:
@@ -579,8 +610,8 @@ def select_files(
         # Restore original signal handler before exiting
         signal.signal(signal.SIGINT, old_handler)
 
-        # Return the set of selected paths (or None if cancelled)
-        return selected_paths
+        # Return the set of selected paths and compressed paths (or None if cancelled)
+        return (selected_paths, compressed_paths)
 
     # --- Draw Help Popup Helper (Inner Function) ---
     def _draw_help_popup(stdscr, has_color):
@@ -598,7 +629,8 @@ def select_files(
             "║   PgUp/PgDn     Page up/down                              ║",
             "║                                                           ║",
             "║ Selection:                                                ║",
-            "║   SPACE         Toggle file/folder selection              ║",
+            "║   SPACE         Toggle file selection ([X] marker)        ║",
+            "║   S             Toggle compressed summary ([★] marker)    ║",
             "║   F             Toggle all files in current folder        ║",
             "║   A             Select/deselect all files                 ║",
             "║   E             Expand all folders (recursive)            ║",
@@ -614,9 +646,9 @@ def select_files(
             "║   H/?           Show this help                            ║",
             "║                                                           ║",
             "║ Tips:                                                     ║",
-            "║   • Click on items to select them                         ║",
+            "║   • [X] = Selected (gold), [★] = Compressed (magenta)    ║",
+            "║   • Compressed files are auto-selected                    ║",
             "║   • F/E/C work on files' parent folders too               ║",
-            "║   • C collapses children but not current folder           ║",
             "║   • Token counts shown for individual files               ║",
             "╚═══════════════════════════════════════════════════════════╝",
             "",
@@ -657,7 +689,7 @@ def select_files(
         stdscr.refresh()
 
     # --- Draw Menu Helper (Inner Function) ---
-    def _draw_menu(stdscr, options, selected_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens):
+    def _draw_menu(stdscr, options, selected_paths, compressed_paths, collapsed_folders, current_page, current_pos, page_size, has_color, directory_path, total_tokens):
         stdscr.clear()
         h, w = stdscr.getmaxyx()
 
@@ -789,12 +821,25 @@ def select_files(
                 elif has_color and is_selected:  # Expanded folder
                     folder_item_attr = folder_item_pair  # Use the expanded folder color
             else:
-                # Show file with regular checkbox and token count
+                # Show file with checkbox/markers and token count
+                resolved_path = str(Path(full_path).resolve())
+                is_compressed = resolved_path in compressed_paths
+
                 # Use shorter checkbox for narrow windows
                 if w < 40:
-                    checkbox = "X " if is_selected else "  "
+                    if is_compressed:
+                        checkbox = "★ "  # Star for compressed
+                    elif is_selected:
+                        checkbox = "X "  # X for selected
+                    else:
+                        checkbox = "  "  # Empty
                 else:
-                    checkbox = "[X] " if is_selected else "[ ] "
+                    if is_compressed:
+                        checkbox = "[★] "  # Star for compressed
+                    elif is_selected:
+                        checkbox = "[X] "  # X for selected
+                    else:
+                        checkbox = "[ ] "  # Empty
 
                 # Show token count only if there's enough width
                 if full_path and w >= 50:
@@ -804,6 +849,14 @@ def select_files(
                     token_suffix = ""
 
             prefix = f"{checkbox}"
+            # Determine prefix color based on state
+            prefix_attr = attr
+            if not is_folder and has_color:
+                resolved_path = str(Path(full_path).resolve())
+                if resolved_path in compressed_paths:
+                    prefix_attr = curses.color_pair(COLOR_PAIR_COMPRESSED) | (curses.A_BOLD if is_highlighted else curses.A_NORMAL)
+                elif resolved_path in selected_paths:
+                    prefix_attr = curses.color_pair(COLOR_PAIR_SELECTED) | (curses.A_BOLD if is_highlighted else curses.A_NORMAL)
             suffix_len = len(token_suffix)
             max_name_width = w - len(prefix) - suffix_len - 1 # Max width for the display name
 
@@ -823,9 +876,9 @@ def select_files(
                     else:
                         truncated_name = "..." + display_name[-(max_name_width-3):] # Show end part
 
-            # Draw prefix
+            # Draw prefix (with appropriate color)
             try:
-                stdscr.addstr(y_pos, 0, prefix, attr)
+                stdscr.addstr(y_pos, 0, prefix, prefix_attr)
             except curses.error: pass
 
             # Draw name (with potential color split)
@@ -871,11 +924,14 @@ def select_files(
 
     # --- Run Curses ---
     final_selected_paths = None # Initialize to None (meaning cancelled or error)
+    final_compressed_paths = None
     try:
-         selected_set = curses.wrapper(_curses_main)
-         if selected_set is not None: # Check if user confirmed (didn't quit)
-             # Convert set of absolute paths back to a sorted list
+         result = curses.wrapper(_curses_main)
+         if result is not None: # Check if user confirmed (didn't quit)
+             selected_set, compressed_set = result
+             # Convert sets of absolute paths back to sorted lists
              final_selected_paths = sorted(list(selected_set))
+             final_compressed_paths = sorted(list(compressed_set))
     except curses.error as e:
          # Clear screen attempts might fail if terminal is in bad state
          # os.system('cls' if os.name == 'nt' else 'clear') # Try clearing screen post-error
@@ -888,5 +944,8 @@ def select_files(
          print(f"\nAn unexpected error occurred during file selection: {e}", file=sys.stderr)
          # Indicate failure
 
-    # Return the final selection (list of absolute paths) or None if cancelled/error
-    return final_selected_paths if final_selected_paths is not None else []
+    # Return the final selection (list of absolute paths) or empty lists if cancelled/error
+    if final_selected_paths is not None and final_compressed_paths is not None:
+        return (final_selected_paths, final_compressed_paths)
+    else:
+        return ([], [])

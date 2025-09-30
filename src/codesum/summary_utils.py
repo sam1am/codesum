@@ -121,8 +121,17 @@ def write_previous_selection(selected_files: list[str], base_dir: Path = Path('.
         print(f"Error serializing selection data to JSON: {e}", file=sys.stderr)
 
 
-def create_code_summary(selected_files: list[str], base_dir: Path = Path('.')):
-    """Creates a basic code summary file with full content of selected files."""
+def create_code_summary(
+    selected_files: list[str],
+    base_dir: Path = Path('.'),
+    compressed_files: list[str] = None,
+    client: OpenAI | None = None,
+    llm_model: str = None
+):
+    """Creates a basic code summary file with full content of selected files.
+
+    For files in compressed_files list, generates AI-powered compressed summaries instead of full content.
+    """
     summary_directory = get_summary_dir(base_dir)
     summary_file = summary_directory / CODE_SUMMARY_FILENAME
     project_root = base_dir.resolve()
@@ -130,6 +139,9 @@ def create_code_summary(selected_files: list[str], base_dir: Path = Path('.')):
     if not summary_directory.exists():
         print(f"Warning: Summary directory {summary_directory} does not exist. Skipping summary creation.", file=sys.stderr)
         return
+
+    # Convert compressed_files to set for efficient lookup
+    compressed_set = set(compressed_files) if compressed_files else set()
 
     try:
         gitignore_specs = file_utils.parse_gitignore(project_root)
@@ -150,11 +162,38 @@ def create_code_summary(selected_files: list[str], base_dir: Path = Path('.')):
 
                     lang_hint = file_path_obj.suffix.lstrip('.') if file_path_obj.suffix else ""
 
-                    summary.write(f"## File: {relative_path.as_posix()}\n\n") # Use relative path for header
-                    summary.write(f"```{lang_hint}\n")
-                    with open(file_path_obj, "r", encoding='utf-8') as f:
-                        summary.write(f.read())
-                    summary.write("\n```\n---\n")
+                    # Check if this file should use compressed summary
+                    if file_path_str in compressed_set and client and llm_model:
+                        summary.write(f"## File: {relative_path.as_posix()} [AI Compressed]\n\n")
+                        print(f"Generating compressed summary for {relative_path.as_posix()}...")
+
+                        # Read the file content
+                        with open(file_path_obj, "r", encoding='utf-8') as f:
+                            file_content = f.read()
+
+                        # Generate compressed summary using AI
+                        compressed_content = openai_utils.compress_single_file(
+                            client,
+                            llm_model,
+                            str(relative_path.as_posix()),
+                            file_content
+                        )
+
+                        if compressed_content:
+                            summary.write(f"{compressed_content}\n\n---\n")
+                        else:
+                            # Fallback to full content if compression fails
+                            summary.write(f"```{lang_hint}\n")
+                            summary.write(file_content)
+                            summary.write("\n```\n---\n")
+                    else:
+                        # Regular full content
+                        summary.write(f"## File: {relative_path.as_posix()}\n\n")
+                        summary.write(f"```{lang_hint}\n")
+                        with open(file_path_obj, "r", encoding='utf-8') as f:
+                            summary.write(f.read())
+                        summary.write("\n```\n---\n")
+
                 except FileNotFoundError:
                      summary.write(f"## File: {file_path_str}\n\nError: File not found.\n\n---\n")
                 except Exception as e:
