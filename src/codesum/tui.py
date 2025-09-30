@@ -384,7 +384,7 @@ def select_files(
                         flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
                         options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
 
-            elif key == ord('c') or key == ord('C'):  # Collapse all folders recursively
+            elif key == ord('c') or key == ord('C'):  # Collapse all child folders recursively
                 if 0 <= current_abs_index < total_options:
                     display_name, path, is_folder, full_path = options[current_abs_index]
 
@@ -399,9 +399,10 @@ def select_files(
                     if target_folder_path:
                         # Get all subfolders within the target folder
                         all_subfolders = folder_utils.collect_all_subfolders(target_folder_path, tree_ref)
-                        # Add all these folders to collapsed_folders to collapse them
+                        # Add all subfolders to collapsed_folders EXCEPT the target folder itself
                         for subfolder in all_subfolders:
-                            collapsed_folders.add(subfolder)
+                            if subfolder != target_folder_path:
+                                collapsed_folders.add(subfolder)
                         # Rebuild options with new collapsed state
                         flattened_items = file_utils.flatten_tree_with_folders_collapsed(tree_ref, collapsed_folders=collapsed_folders, folder_paths=folder_paths)
                         options[:] = [(display, p, is_fold, f_path) for display, p, is_fold, f_path in flattened_items]
@@ -424,7 +425,7 @@ def select_files(
                     current_page += 1
                     current_pos = 0
 
-            elif key == ord('n') or key == ord('N'):  # Next folder
+            elif key == curses.KEY_RIGHT:  # Next folder
                 # Find the next folder after current position
                 next_folder_abs_index = None
                 for i in range(current_abs_index + 1, total_options):
@@ -437,7 +438,7 @@ def select_files(
                     current_page = next_folder_abs_index // page_size
                     current_pos = next_folder_abs_index % page_size
 
-            elif key == ord('p') or key == ord('P'):  # Previous folder
+            elif key == curses.KEY_LEFT:  # Previous folder
                 # Find the previous folder before current position
                 prev_folder_abs_index = None
                 for i in range(current_abs_index - 1, -1, -1):
@@ -450,12 +451,12 @@ def select_files(
                     current_page = prev_folder_abs_index // page_size
                     current_pos = prev_folder_abs_index % page_size
 
-            elif key == curses.KEY_LEFT or key == curses.KEY_PPAGE: # Page Up
+            elif key == curses.KEY_PPAGE:  # Page Up
                  if current_page > 0:
                     current_page -= 1
                     current_pos = 0
 
-            elif key == curses.KEY_RIGHT or key == curses.KEY_NPAGE: # Page Down
+            elif key == curses.KEY_NPAGE:  # Page Down
                  if current_page < total_pages - 1:
                     current_page += 1
                     current_pos = 0
@@ -486,16 +487,15 @@ def select_files(
             "╠═══════════════════════════════════════════════════════════╣",
             "║ Navigation:                                               ║",
             "║   ↑/↓           Move up/down                              ║",
-            "║   ←/→           Page left/right                           ║",
+            "║   ←/→           Jump to previous/next folder              ║",
             "║   PgUp/PgDn     Page up/down                              ║",
-            "║   N/P           Jump to next/previous folder              ║",
             "║                                                           ║",
             "║ Selection:                                                ║",
             "║   SPACE         Toggle file/folder selection              ║",
             "║   F             Toggle all files in current folder        ║",
             "║   A             Select/deselect all files                 ║",
             "║   E             Expand all folders (recursive)            ║",
-            "║   C             Collapse all folders (recursive)          ║",
+            "║   C             Collapse child folders (recursive)        ║",
             "║                                                           ║",
             "║ Actions:                                                  ║",
             "║   ENTER         Confirm selection                         ║",
@@ -504,7 +504,8 @@ def select_files(
             "║                                                           ║",
             "║ Tips:                                                     ║",
             "║   • SPACE on folder expands/collapses it                  ║",
-            "║   • F works on files and their parent folders             ║",
+            "║   • F/E/C work on files' parent folders too               ║",
+            "║   • C collapses children but not current folder           ║",
             "║   • Token counts shown for individual files               ║",
             "║   • Total tokens shown in header                          ║",
             "╚═══════════════════════════════════════════════════════════╝",
